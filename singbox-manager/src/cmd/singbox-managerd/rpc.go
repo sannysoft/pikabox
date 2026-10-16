@@ -430,8 +430,8 @@ func setSubscription(configPath string, raw json.RawMessage) map[string]any {
 		return fail(err)
 	}
 	sub.LastUpdate, sub.LastError = existing.LastUpdate, existing.LastError
-	if isEdit && existing.URL != sub.URL {
-		sub.LastUpdate = "" // new source: due for an immediate fetch
+	if isEdit && (existing.URL != sub.URL || existing.UserAgent != sub.UserAgent || existing.HWID != sub.HWID) {
+		sub.LastUpdate = "" // the server may answer differently: fetch now
 	}
 	if err := managerconfig.UpsertSubscription(configPath, sub); err != nil {
 		return fail(err)

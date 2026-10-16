@@ -34,6 +34,8 @@ function showModal(view, row) {
 		E('label', {}, [ _('Name'), E('input', { 'class': 'cbi-input-text', 'name': 'name', 'value': row.name || '', 'placeholder': 'provider-1' }) ]),
 		E('label', {}, [ _('URL'), E('input', { 'class': 'cbi-input-text', 'name': 'url', 'value': row.url || '', 'placeholder': 'https://provider.example/sub/…' }) ]),
 		E('label', {}, [ _('Format'), theme.select('format', [ 'auto', 'base64', 'plain' ], row.format || 'auto') ]),
+		E('label', {}, [ _('User-Agent (optional)'), E('input', { 'class': 'cbi-input-text', 'name': 'user_agent', 'value': row.user_agent || '', 'placeholder': 'singbox-manager/1.0 — e.g. sing-box/1.13, Incy/1.0' }) ]),
+		theme.checkbox('hwid', !!row.hwid, _('Send HWID (device headers) — for panels with a device limit; registers this router as one device')),
 		E('label', {}, [ _('Filter'), E('textarea', { 'class': 'cbi-input-textarea singbox-manager-mono', 'name': 'filter', 'style': 'min-height:64px' }, [ row.filter || '' ]) ]),
 		E('p', { 'class': 'singbox-manager-inline-help' }, [ FILTER_HELP ]),
 		row.id ? E('div', { 'class': 'singbox-manager-actions' }, [
@@ -49,6 +51,8 @@ function showModal(view, row) {
 			name: theme.value(root, 'name'),
 			url: theme.value(root, 'url'),
 			format: theme.value(root, 'format'),
+			user_agent: theme.value(root, 'user_agent'),
+			hwid: theme.value(root, 'hwid'),
 			filter: theme.value(root, 'filter'),
 			count: parseInt(theme.value(root, 'count'), 10) || 0,
 			update_interval: theme.value(root, 'update_interval')

@@ -58,6 +58,10 @@ func UpsertSubscription(path string, subscription Subscription) error {
 		"update_interval": valueOrDefault(subscription.UpdateInterval, "24h"),
 	}
 	setOrDelete(options, "filter", strings.TrimSpace(subscription.Filter))
+	setOrDelete(options, "user_agent", strings.TrimSpace(subscription.UserAgent))
+	if subscription.HWID {
+		options["hwid"] = "1"
+	}
 	setOrDelete(options, "last_update", subscription.LastUpdate)
 	setOrDelete(options, "last_error", subscription.LastError)
 	return upsert(path, section{typ: "subscription", name: subscription.ID, options: options, lists: map[string][]string{}})

@@ -8,7 +8,9 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -47,10 +49,14 @@ func refreshSubscription(configPath string, id string) (managerconfig.Subscripti
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	data, err := subscription.Fetch(ctx, sub.URL, "")
+	headers, err := fetchHeaders(sub)
+	if err != nil {
+		return fail(err)
+	}
+	data, err := subscription.Fetch(ctx, sub.URL, "", headers)
 	if err != nil {
 		if proxy := localProxyAddr(*cfg); proxy != "" {
-			data, err = subscription.Fetch(ctx, sub.URL, proxy)
+			data, err = subscription.Fetch(ctx, sub.URL, proxy, headers)
 		}
 		if err != nil {
 			return fail(err)
@@ -81,6 +87,35 @@ func refreshSubscription(configPath string, id string) (managerconfig.Subscripti
 	}
 	probeAll(configPath, []string{id}, false)
 	return managerconfig.LoadSubscriptionState(id), nil
+}
+
+// fetchHeaders builds the per-subscription request headers: a custom
+// User-Agent and, when enabled, the device headers HWID-limited panels
+// (Remnawave and similar) expect.
+func fetchHeaders(sub managerconfig.Subscription) (map[string]string, error) {
+	headers := map[string]string{}
+	if sub.UserAgent != "" {
+		headers["User-Agent"] = sub.UserAgent
+	}
+	if sub.HWID {
+		id, err := managerconfig.DeviceID()
+		if err != nil {
+			return nil, fmt.Errorf("hwid: %w", err)
+		}
+		headers["x-hwid"] = id
+		headers["x-device-os"] = "Linux"
+		headers["x-ver-os"] = openwrtVersion()
+		headers["x-device-model"] = "OpenWrt router"
+	}
+	return headers, nil
+}
+
+func openwrtVersion() string {
+	data, err := os.ReadFile("/etc/openwrt_version")
+	if v := strings.TrimSpace(string(data)); err == nil && v != "" {
+		return v
+	}
+	return "OpenWrt"
 }
 
 // probeAll delay-tests outbounds and subscription candidates in one probe

@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -198,5 +199,34 @@ func TestEditRejectsInvalidResultAndKeepsFile(t *testing.T) {
 	}
 	if !strings.Contains(string(after), "telegram.org") {
 		t.Fatal("sanity")
+	}
+}
+
+func TestSubscriptionFetchOptionsRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cfg")
+	if err := os.WriteFile(path, []byte("config manager 'main'\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	want := Subscription{ID: "imp", Enabled: true, Name: "imp", URL: "https://e.com/sub/x", Format: "auto", Count: 3, UserAgent: "Incy/1.0", HWID: true}
+	if err := UpsertSubscription(path, want); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Subscriptions["imp"]; got.UserAgent != "Incy/1.0" || !got.HWID {
+		t.Fatalf("user_agent/hwid lost: %#v", got)
+	}
+}
+
+func TestDeviceIDIsStable(t *testing.T) {
+	StateDir = t.TempDir()
+	a, err := DeviceID()
+	if err != nil || len(a) != 32 {
+		t.Fatalf("DeviceID = %q, %v", a, err)
+	}
+	if b, _ := DeviceID(); b != a {
+		t.Fatalf("HWID changed between calls: %q vs %q", a, b)
 	}
 }

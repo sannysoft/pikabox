@@ -57,9 +57,30 @@ func ParseOutbounds(data []byte, format string) ([]Item, error) {
 		items = append(items, item)
 	}
 	if len(items) == 0 && len(parseErrors) > 0 {
-		return nil, errors.New(strings.Join(parseErrors, "; "))
+		return nil, summarizeErrors(parseErrors)
 	}
 	return items, nil
+}
+
+// summarizeErrors collapses repeated per-entry errors ("19× unsupported
+// transport ...") so a subscription of one unsupported kind reads clearly.
+func summarizeErrors(messages []string) error {
+	counts := map[string]int{}
+	var order []string
+	for _, message := range messages {
+		if counts[message] == 0 {
+			order = append(order, message)
+		}
+		counts[message]++
+	}
+	parts := make([]string, 0, len(order))
+	for _, message := range order {
+		if counts[message] > 1 {
+			message = fmt.Sprintf("%d× %s", counts[message], message)
+		}
+		parts = append(parts, message)
+	}
+	return fmt.Errorf("no usable outbounds: %s", strings.Join(parts, "; "))
 }
 
 // ParseSource converts one outbound definition — a share URI or a sing-box
@@ -193,7 +214,7 @@ func Due(source managerconfig.Subscription, now time.Time) bool {
 
 // Fetch downloads a subscription, through proxyAddr (an HTTP proxy such as the
 // local mixed inbound) when it is set.
-func Fetch(ctx context.Context, rawURL string, proxyAddr string) ([]byte, error) {
+func Fetch(ctx context.Context, rawURL string, proxyAddr string, headers map[string]string) ([]byte, error) {
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
 		return nil, err
@@ -211,6 +232,9 @@ func Fetch(ctx context.Context, rawURL string, proxyAddr string) ([]byte, error)
 		return nil, err
 	}
 	req.Header.Set("User-Agent", "singbox-manager/1.0")
+	for key, value := range headers {
+		req.Header.Set(key, value)
+	}
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -744,7 +768,7 @@ func addTransport(outbound map[string]any, node managerconfig.Node) error {
 		// sing-box only implements ws, grpc, http, httpupgrade, and quic V2Ray
 		// transports. xhttp/splithttp are Xray-only and have no sing-box
 		// equivalent, so a node using them cannot be rendered.
-		return fmt.Errorf("%w %q for node %q: sing-box supports ws, grpc, http, and httpupgrade; xhttp/splithttp are not supported", ErrUnsupportedTransport, node.Transport, node.ID)
+		return fmt.Errorf("%w %q (sing-box implements ws, grpc, http, httpupgrade; xhttp/splithttp are Xray-only)", ErrUnsupportedTransport, node.Transport)
 	}
 	outbound["transport"] = transport
 	return nil

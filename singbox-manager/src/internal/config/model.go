@@ -69,13 +69,19 @@ type Outbound struct {
 // delay-tested, and the Count fastest alive ones are used wherever the
 // subscription is referenced (0 = all alive).
 type Subscription struct {
-	ID             string `json:"id"`
-	Enabled        bool   `json:"enabled"`
-	Name           string `json:"name"`
-	URL            string `json:"url"`
-	Format         string `json:"format"`
-	Filter         string `json:"filter"`
-	Count          int    `json:"count"`
+	ID      string `json:"id"`
+	Enabled bool   `json:"enabled"`
+	Name    string `json:"name"`
+	URL     string `json:"url"`
+	Format  string `json:"format"`
+	Filter  string `json:"filter"`
+	Count   int    `json:"count"`
+	// UserAgent overrides the fetch User-Agent; many panels pick the response
+	// format (or refuse) by client name.
+	UserAgent string `json:"user_agent"`
+	// HWID sends this router's stable device ID (x-hwid and friends) for
+	// panels that enforce a per-device limit. It registers a device there.
+	HWID           bool   `json:"hwid"`
 	UpdateInterval string `json:"update_interval"`
 	LastUpdate     string `json:"last_update"`
 	LastError      string `json:"last_error"`

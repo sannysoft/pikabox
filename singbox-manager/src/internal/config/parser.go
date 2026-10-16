@@ -354,6 +354,7 @@ func readSubscription(sec section) (Subscription, error) {
 	enabled, name, err := readNamed(sec, map[string]bool{
 		"url": true, "format": true, "filter": true, "count": true,
 		"update_interval": true, "last_update": true, "last_error": true,
+		"user_agent": true, "hwid": true,
 	}, nil)
 	if err != nil {
 		return Subscription{}, err
@@ -368,6 +369,12 @@ func readSubscription(sec section) (Subscription, error) {
 		UpdateInterval: valueOrDefault(sec.options["update_interval"], "24h"),
 		LastUpdate:     sec.options["last_update"],
 		LastError:      sec.options["last_error"],
+	}
+	subscription.UserAgent = sec.options["user_agent"]
+	if value, ok := sec.options["hwid"]; ok {
+		if subscription.HWID, err = parseBool(sec, "hwid", value); err != nil {
+			return Subscription{}, err
+		}
 	}
 	if value, ok := sec.options["count"]; ok {
 		if subscription.Count, err = parseNonNegativeInt(sec, "count", value); err != nil {

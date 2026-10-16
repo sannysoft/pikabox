@@ -1,10 +1,13 @@
 package config
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 var (
@@ -70,6 +73,21 @@ type ProbeResult struct {
 	LatencyMS int    `json:"latency_ms,omitempty"`
 	Error     string `json:"error,omitempty"`
 	CheckedAt string `json:"checked_at"`
+}
+
+// DeviceID returns this router's HWID, generated once and kept in StateDir so
+// it survives reboots and upgrades (a new one would count as a new device).
+func DeviceID() (string, error) {
+	path := filepath.Join(StateDir, "hwid")
+	if data, err := os.ReadFile(path); err == nil && len(strings.TrimSpace(string(data))) > 0 {
+		return strings.TrimSpace(string(data)), nil
+	}
+	raw := make([]byte, 16)
+	if _, err := rand.Read(raw); err != nil {
+		return "", err
+	}
+	id := hex.EncodeToString(raw)
+	return id, writeAtomic(path, []byte(id+"\n"), 0600)
 }
 
 func LoadSubscriptionState(id string) SubscriptionState {
