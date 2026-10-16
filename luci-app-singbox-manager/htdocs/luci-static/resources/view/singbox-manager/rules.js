@@ -27,7 +27,7 @@ function showModal(view, data, row) {
 	var types = data.rule_types || Object.keys(PLACEHOLDERS);
 	var body = E('tbody');
 	var count = E('span', { 'class': 'sbm-count' });
-	var filter = E('input', { 'class': 'cbi-input-text', 'type': 'search', 'placeholder': _('Filter rules…'), 'style': 'max-width:220px' });
+	var filter = E('input', { 'type': 'search', 'placeholder': _('Filter'), 'aria-label': _('Filter rules') });
 
 	var update = function() {
 		var q = filter.value.trim().toLowerCase();
@@ -40,7 +40,7 @@ function showModal(view, data, row) {
 			if (visible)
 				shown++;
 		});
-		count.textContent = q ? _('%d of %d rules').format(shown, rows.length) : _('%d rules').format(rows.length);
+		count.textContent = q ? _('%d of %d').format(shown, rows.length) : String(rows.length);
 	};
 
 	var ruleRow = function(type, value) {
@@ -95,28 +95,34 @@ function showModal(view, data, row) {
 	]);
 
 	theme.modal(view, row.id ? _('Edit rule group') : _('New rule group'), [
-		E('div', { 'class': 'sbm-rules-tools' }, [
-			E('label', { 'style': 'flex:1 1 240px' }, [ _('Name'), E('input', { 'class': 'cbi-input-text', 'name': 'name', 'value': row.name || '', 'placeholder': 'telegram' }) ]),
+		E('div', { 'class': 'sbm-namebar' }, [
+			E('label', {}, [ _('Name'), E('input', { 'class': 'cbi-input-text', 'name': 'name', 'value': row.name || '', 'placeholder': 'telegram' }) ]),
 			theme.checkbox('enabled', row.enabled !== false, _('Enabled'))
 		]),
-		E('div', { 'class': 'sbm-rules-tools' }, [ filter, count ]),
-		E('div', { 'class': 'sbm-rules-scroll' }, E('table', { 'class': 'sbm-rules' }, [
-			E('thead', {}, E('tr', {}, [ E('th', {}, _('Type')), E('th', {}, _('Value')), E('th') ])),
-			body
-		])),
-		E('div', { 'class': 'sbm-add' }, [
-			E('button', { 'type': 'button', 'class': 'btn cbi-button cbi-button-add', 'click': function() {
-				var last = body.lastElementChild;
-				var tr = ruleRow(last ? last.querySelector('select').value : 'domain_suffix', '');
-				body.appendChild(tr);
-				tr.querySelector('input').focus();
-				update();
-			} }, _('Add rule')),
-			E('button', { 'type': 'button', 'class': 'btn cbi-button', 'click': function() {
-				paste.style.display = paste.style.display === 'none' ? 'grid' : 'none';
-				if (paste.style.display !== 'none')
-					pasteBox.focus();
-			} }, _('Paste list…'))
+		E('section', { 'class': 'sbm-panel', 'aria-label': _('Rules') }, [
+			E('header', { 'class': 'sbm-panel-head' }, [
+				E('div', { 'class': 'sbm-panel-title' }, [ _('Rules'), ' ', count ]),
+				E('label', { 'class': 'sbm-search' }, [ filter ])
+			]),
+			E('div', { 'class': 'sbm-panel-body' }, E('table', { 'class': 'sbm-rules' }, [
+				E('thead', {}, E('tr', {}, [ E('th', {}, _('Type')), E('th', {}, _('Value')), E('th') ])),
+				body
+			])),
+			E('footer', { 'class': 'sbm-panel-foot' }, [
+				E('button', { 'type': 'button', 'class': 'btn cbi-button cbi-button-add', 'click': function() {
+					var last = body.lastElementChild;
+					var tr = ruleRow(last ? last.querySelector('select').value : 'domain_suffix', '');
+					body.appendChild(tr);
+					tr.querySelector('input').focus();
+					tr.scrollIntoView({ block: 'nearest' });
+					update();
+				} }, _('Add rule')),
+				E('button', { 'type': 'button', 'class': 'btn cbi-button', 'click': function() {
+					paste.style.display = paste.style.display === 'none' ? 'grid' : 'none';
+					if (paste.style.display !== 'none')
+						pasteBox.focus();
+				} }, _('Paste list…'))
+			])
 		]),
 		paste,
 		E('p', { 'class': 'singbox-manager-inline-help' }, _('A connection matches the group when any rule matches, so rule order does not matter. Enter in a value adds a row below. remote = a sing-box rule-set URL (.srs binary, otherwise JSON), downloaded through the tunnel and cached on the router.'))
