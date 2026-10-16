@@ -160,11 +160,86 @@ var CSS = [
 	'.singbox-manager-member{font-size:12px;padding:2px 8px;border-radius:12px;border:1px solid var(--border-color-medium);white-space:nowrap}',
 	'.singbox-manager-member.now{border-color:#2271b1;background:rgba(34,113,177,.12)}',
 	'.singbox-manager-member.off{opacity:.5;text-decoration:line-through}',
-	'.singbox-manager-order{display:grid;gap:6px}',
-	'.singbox-manager-order-row{display:grid;grid-template-columns:28px minmax(0,1fr) auto;gap:8px;align-items:center}',
-	'.singbox-manager-route-row{display:grid;grid-template-columns:28px 48px minmax(0,1fr) 24px minmax(0,1fr) auto;gap:8px;align-items:center}',
-	'.singbox-manager-route-row select{width:100%;min-width:0;margin:0}',
-	'.singbox-manager-idx{font-size:12px;color:var(--text-color-medium);text-align:right}',
+	/* ---- kind pills: what a target is, at a glance ---- */
+	'.sbm-pill{display:inline-flex;align-items:center;gap:6px;max-width:100%;font-size:12px;line-height:1;padding:5px 10px 5px 8px;border-radius:999px;border:1px solid transparent;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+	'.sbm-pill:before{content:"";flex:0 0 auto;width:7px;height:7px;border-radius:50%;background:currentColor}',
+	'.sbm-pill small{font-size:10px;letter-spacing:.06em;text-transform:uppercase;opacity:.7}',
+	'.sbm-k-group{color:#5b4bd6;background:rgba(91,75,214,.10);border-color:rgba(91,75,214,.25)}',
+	'.sbm-k-subscription{color:#0d7f86;background:rgba(13,127,134,.10);border-color:rgba(13,127,134,.25)}',
+	'.sbm-k-outbound{color:#4a5568;background:rgba(74,85,104,.10);border-color:rgba(74,85,104,.22)}',
+	'.sbm-k-direct{color:#0f7a39;background:rgba(15,122,57,.10);border-color:rgba(15,122,57,.25)}',
+	'.sbm-k-block{color:#b42318;background:rgba(180,35,24,.08);border-color:rgba(180,35,24,.25)}',
+	'.sbm-k-rule{color:#8a5a00;background:rgba(214,139,0,.10);border-color:rgba(214,139,0,.28)}',
+	'.sbm-k-missing{color:#b42318;border-style:dashed;border-color:#b42318}',
+	'[data-darkmode="true"] .sbm-k-group{color:#a99cff}',
+	'[data-darkmode="true"] .sbm-k-subscription{color:#5fd4db}',
+	'[data-darkmode="true"] .sbm-k-outbound{color:#b8c2d3}',
+	'[data-darkmode="true"] .sbm-k-direct{color:#5fd08f}',
+	'[data-darkmode="true"] .sbm-k-block{color:#ff8a80}',
+	'[data-darkmode="true"] .sbm-k-rule{color:#f5c15a}',
+
+	/* ---- draggable lists (members, routes) ---- */
+	'.sbm-list{display:grid;gap:6px;margin:0;padding:0;list-style:none}',
+	'.sbm-item{display:grid;grid-template-columns:28px minmax(0,1fr) auto;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--border-color-medium);border-radius:10px;background:var(--background-color-high);transition:box-shadow .15s,border-color .15s}',
+	'.sbm-item:hover{border-color:var(--border-color-strong,#9aa0a6)}',
+	'.sbm-item.sbm-off{opacity:.55}',
+	'.sbm-grip{display:grid;place-items:center;width:28px;height:28px;padding:0;border:0;border-radius:6px;background:transparent;color:var(--text-color-medium);cursor:grab;touch-action:none}',
+	'.sbm-grip:hover,.sbm-grip:focus-visible{background:var(--background-color-low);color:var(--text-color-high)}',
+	'.sbm-grip:focus-visible{outline:2px solid #2271b1;outline-offset:1px}',
+	'.sbm-grip svg{width:12px;height:16px;fill:currentColor}',
+	'.sbm-ghost{opacity:.35;border-style:dashed}',
+	'.sbm-chosen{box-shadow:0 8px 24px rgba(0,0,0,.18);border-color:#2271b1}',
+	'.sbm-drag{cursor:grabbing}',
+	'.sbm-item-main{display:flex;align-items:center;gap:10px;min-width:0}',
+	'.sbm-item-meta{font-size:12px;color:var(--text-color-medium);white-space:nowrap}',
+	'.sbm-x{width:28px;height:28px;padding:0;border:0;border-radius:6px;background:transparent;color:var(--text-color-medium);font-size:18px;line-height:1;cursor:pointer}',
+	'.sbm-x:hover,.sbm-x:focus-visible{background:rgba(180,35,24,.10);color:#b42318}',
+	'.sbm-add{display:flex;gap:8px;align-items:center;margin-top:4px}',
+	'.sbm-add select{flex:1 1 auto;min-width:0;margin:0}',
+	'.sbm-empty{padding:14px;border:1px dashed var(--border-color-medium);border-radius:10px;text-align:center;font-size:12px;color:var(--text-color-medium)}',
+	'.sbm-pos{font-size:11px;font-variant-numeric:tabular-nums;color:var(--text-color-medium);min-width:2.2em}',
+
+	/* ---- route rows: [grip] [on] when <rule group> → <target> ---- */
+	'.sbm-route{grid-template-columns:28px 44px minmax(0,1fr) 20px minmax(0,1fr) 28px}',
+	'.sbm-route select,.sbm-final select{width:100%;min-width:0;margin:0}',
+	'.sbm-arrow{color:var(--text-color-medium);text-align:center}',
+	'.sbm-final{display:grid;grid-template-columns:28px 44px minmax(0,1fr) 20px minmax(0,1fr) 28px;align-items:center;gap:10px;padding:10px;border-radius:10px;background:var(--background-color-low)}',
+	'.sbm-final strong{font-size:13px}',
+	'.sbm-switch{position:relative;display:inline-block;width:38px;height:22px}',
+	'.sbm-switch input{position:absolute;opacity:0;width:0;height:0}',
+	'.sbm-switch span{position:absolute;inset:0;border-radius:22px;background:var(--border-color-medium);transition:.2s;cursor:pointer}',
+	'.sbm-switch span:before{content:"";position:absolute;width:16px;height:16px;left:3px;top:3px;border-radius:50%;background:#fff;transition:.2s}',
+	'.sbm-switch input:checked+span{background:#2271b1}',
+	'.sbm-switch input:checked+span:before{transform:translateX(16px)}',
+	'.sbm-switch input:focus-visible+span{outline:2px solid #2271b1;outline-offset:2px}',
+	'select.sbm-target{border-left-width:4px!important}',
+	'select.sbm-target[data-kind="group"]{border-left-color:#5b4bd6!important}',
+	'select.sbm-target[data-kind="subscription"]{border-left-color:#0d7f86!important}',
+	'select.sbm-target[data-kind="outbound"]{border-left-color:#4a5568!important}',
+	'select.sbm-target[data-kind="direct"]{border-left-color:#0f7a39!important}',
+	'select.sbm-target[data-kind="block"]{border-left-color:#b42318!important}',
+	'select.sbm-rulegroup{border-left:4px solid #d68b00!important}',
+	'.sbm-dirty{display:none;font-size:12px;color:#b45309}',
+	'.sbm-dirty.on{display:inline}',
+
+	/* ---- rule table editor ---- */
+	'.sbm-rules{width:100%;border-collapse:separate;border-spacing:0 6px}',
+	'.sbm-rules th{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--text-color-medium);font-weight:600;text-align:left;padding:0 6px}',
+	'.sbm-rules td{padding:0 6px;vertical-align:middle}',
+	'.sbm-rules td:first-child{width:190px}',
+	'.sbm-rules td:last-child{width:32px}',
+	'.sbm-rules select,.sbm-rules input{width:100%;box-sizing:border-box;margin:0;font-family:monospace;font-size:12px}',
+	'.sbm-rules tr.sbm-invalid input{border-color:#b42318}',
+	'.sbm-rules-tools{display:flex;gap:12px;flex-wrap:wrap;align-items:center;justify-content:space-between}',
+	'.sbm-rules-tools input[type=search]{margin:0}',
+	'.sbm-rules-scroll{max-height:46vh;overflow:auto;padding-right:4px}',
+	'.sbm-count{font-size:12px;color:var(--text-color-medium)}',
+	'.modal:has(.sbm-wide){width:min(880px,94vw)!important;max-width:none!important}',
+	'.singbox-manager-modal-form.sbm-wide{min-width:0;width:100%}',
+	'.sbm-rules-tools label.singbox-manager-check{margin:0;align-self:end;padding-bottom:6px}',
+
+	'@media(prefers-reduced-motion:reduce){.sbm-item,.sbm-switch span,.sbm-switch span:before{transition:none}}',
+	'@media(max-width:760px){.sbm-route,.sbm-final{grid-template-columns:28px 44px minmax(0,1fr) 28px}.sbm-route .sbm-arrow,.sbm-final .sbm-arrow{display:none}.sbm-route>select:nth-of-type(2),.sbm-final>select{grid-column:3}}',
 	'.singbox-manager-mono{font-family:monospace;font-size:12px}',
 	'textarea.singbox-manager-mono{min-height:120px;resize:vertical;width:100%;box-sizing:border-box}',
 
@@ -183,6 +258,9 @@ var CSS = [
 // ESC byte and without it, since the syslog pipeline may have stripped or
 // mangled the control character.
 var ANSI_RE = /(?:\x1b|␛)?\[[0-9;]*m/g;
+
+// Single in-flight load of the bundled SortableJS.
+var sortableLoading = null;
 
 return baseclass.extend({
 	// text wraps a value as a one-element child list. LuCI's E()/dom.append
@@ -283,10 +361,10 @@ return baseclass.extend({
 
 	// modal shows a form modal; save(root) returns a promise of a backend
 	// result, and on success the modal closes and the view refreshes.
-	modal: function(view, title, body, save, successText) {
+	modal: function(view, title, body, save, successText, wide) {
 		var self = this;
 		ui.showModal(title, [
-			E('div', { 'class': 'singbox-manager-modal-form' }, body),
+			E('div', { 'class': 'singbox-manager-modal-form' + (wide ? ' sbm-wide' : '') }, body),
 			E('div', { 'class': 'right' }, [
 				E('button', { 'class': 'btn cbi-button', 'click': ui.hideModal }, _('Cancel')),
 				' ',
@@ -327,66 +405,113 @@ return baseclass.extend({
 		]);
 	},
 
-	// orderedList is an editable, reorderable list of target IDs (used by
-	// group members). options: [{id, name, kind}]. The list lives in the DOM;
-	// read it back with orderedValues(root).
+	// pill renders a target as a coloured, labelled chip so its kind
+	// (group / subscription / outbound / direct / block) reads at a glance.
+	pill: function(name, kind, title) {
+		var cls = kind === 'builtin' ? (name === 'block' ? 'block' : 'direct') : (kind || 'missing');
+		return E('span', { 'class': 'sbm-pill sbm-k-' + cls, 'title': title || '' }, [
+			String(name),
+			(kind && kind !== 'builtin') ? E('small', {}, [ kind === 'subscription' ? _('sub') : kind ]) : ''
+		]);
+	},
+
+	grip: function() {
+		var btn = E('button', { 'type': 'button', 'class': 'sbm-grip', 'aria-label': _('Drag to reorder; Alt+Up/Down moves') });
+		btn.innerHTML = '<svg viewBox="0 0 12 16" aria-hidden="true"><circle cx="3" cy="3" r="1.5"/><circle cx="9" cy="3" r="1.5"/><circle cx="3" cy="8" r="1.5"/><circle cx="9" cy="8" r="1.5"/><circle cx="3" cy="13" r="1.5"/><circle cx="9" cy="13" r="1.5"/></svg>';
+		// Keyboard reordering, so drag & drop is never the only way.
+		btn.addEventListener('keydown', function(ev) {
+			if (!ev.altKey || (ev.key !== 'ArrowUp' && ev.key !== 'ArrowDown'))
+				return;
+			ev.preventDefault();
+			var item = btn.closest('[data-sortable-item]');
+			var sibling = ev.key === 'ArrowUp' ? item.previousElementSibling : item.nextElementSibling;
+			if (!sibling || !sibling.hasAttribute('data-sortable-item'))
+				return;
+			item.parentNode.insertBefore(item, ev.key === 'ArrowUp' ? sibling : sibling.nextSibling);
+			btn.focus();
+			item.parentNode.dispatchEvent(new CustomEvent('sbm-reorder', { bubbles: true }));
+		});
+		return btn;
+	},
+
+	// sortable makes a list's [data-sortable-item] children draggable by
+	// their .sbm-grip, loading the bundled SortableJS once. onChange runs
+	// after any reorder (drag or keyboard).
+	sortable: function(list, onChange) {
+		list.addEventListener('sbm-reorder', function() { if (onChange) onChange(); });
+		var attach = function() {
+			window.Sortable.create(list, {
+				handle: '.sbm-grip',
+				draggable: '[data-sortable-item]',
+				animation: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 160,
+				ghostClass: 'sbm-ghost',
+				chosenClass: 'sbm-chosen',
+				dragClass: 'sbm-drag',
+				onEnd: function() { if (onChange) onChange(); }
+			});
+		};
+		if (window.Sortable)
+			return attach();
+		if (!sortableLoading) {
+			sortableLoading = new Promise(function(resolve, reject) {
+				var script = document.createElement('script');
+				script.src = L.resource('singbox-manager/Sortable.min.js');
+				script.onload = resolve;
+				script.onerror = reject;
+				document.head.appendChild(script);
+			});
+		}
+		sortableLoading.then(attach);
+	},
+
+	// orderedList is a draggable list of target IDs (group members).
+	// options: [{id, name, kind, latency_ms?}]; read back with orderedValues.
 	orderedList: function(values, options) {
 		var self = this;
-		var box = E('div', { 'class': 'singbox-manager-order', 'data-ordered': '1' });
-		var label = function(id) {
-			var opt = options.filter(function(o) { return o.id === id; })[0];
-			return opt ? '%s (%s)'.format(opt.name || opt.id, opt.kind) : id + ' (missing)';
-		};
+		var byId = {};
+		options.forEach(function(o) { byId[o.id] = o; });
+		var list = E('ol', { 'class': 'sbm-list', 'data-ordered': '1' });
+		var empty = E('div', { 'class': 'sbm-empty' }, [ _('No members yet — add one below.') ]);
 		var renumber = function() {
-			box.querySelectorAll('.singbox-manager-idx').forEach(function(el, i) { el.textContent = (i + 1) + '.'; });
+			var items = list.querySelectorAll('[data-sortable-item]');
+			items.forEach(function(el, i) { el.querySelector('.sbm-pos').textContent = '#' + (i + 1); });
+			empty.style.display = items.length ? 'none' : '';
 		};
-		var row = function(id) {
-			var el = E('div', { 'class': 'singbox-manager-order-row', 'data-value': id }, [
-				E('span', { 'class': 'singbox-manager-idx' }),
-				E('span', {}, [ label(id) ]),
-				E('div', { 'class': 'singbox-manager-actions' }, [
-					E('button', { 'type': 'button', 'class': 'btn cbi-button', 'title': _('Move up'), 'click': function() {
-						if (el.previousElementSibling && el.previousElementSibling.dataset.value !== undefined)
-							box.insertBefore(el, el.previousElementSibling);
-						renumber();
-					} }, [ '↑' ]),
-					E('button', { 'type': 'button', 'class': 'btn cbi-button', 'title': _('Move down'), 'click': function() {
-						var next = el.nextElementSibling;
-						if (next && next.dataset.value !== undefined)
-							box.insertBefore(next, el);
-						renumber();
-					} }, [ '↓' ]),
-					E('button', { 'type': 'button', 'class': 'btn cbi-button cbi-button-remove', 'click': function() {
-						el.remove();
-						renumber();
-					} }, [ '×' ])
-				])
+		var item = function(id) {
+			var o = byId[id] || { id: id, name: id, kind: '' };
+			var el = E('li', { 'class': 'sbm-item', 'data-sortable-item': '1', 'data-value': id }, [
+				self.grip(),
+				E('div', { 'class': 'sbm-item-main' }, [
+					E('span', { 'class': 'sbm-pos' }),
+					self.pill(o.name || o.id, o.kind, o.kind ? '' : _('Missing — it was deleted'))
+				]),
+				E('button', { 'type': 'button', 'class': 'sbm-x', 'aria-label': _('Remove %s').format(o.name || o.id), 'click': function() {
+					el.remove();
+					renumber();
+				} }, [ '×' ])
 			]);
 			return el;
 		};
-		var picker = self.select('_add', [ { id: '', name: _('— add member —') } ].concat(options.map(function(o) {
-			return { id: o.id, name: '%s (%s)'.format(o.name || o.id, o.kind) };
-		})), '');
-		var adder = E('div', { 'class': 'singbox-manager-order-row' }, [
-			E('span'),
-			picker,
-			E('button', { 'type': 'button', 'class': 'btn cbi-button cbi-button-add', 'click': function() {
+		values.forEach(function(id) { list.appendChild(item(id)); });
+		var picker = self.select('_add', [ { id: '', name: _('Add member…') } ].concat(options.map(function(o) {
+			return { id: o.id, name: '%s — %s'.format(o.name || o.id, o.kind === 'builtin' ? _('built-in') : o.kind) };
+		})), '', {
+			'change': function() {
 				if (!picker.value)
 					return;
-				box.insertBefore(row(picker.value), adder);
+				list.appendChild(item(picker.value));
 				picker.value = '';
 				renumber();
-			} }, [ _('Add') ])
-		]);
-		values.forEach(function(id) { box.appendChild(row(id)); });
-		box.appendChild(adder);
+			}
+		});
+		self.sortable(list, renumber);
 		renumber();
-		return box;
+		return E('div', {}, [ list, empty, E('div', { 'class': 'sbm-add' }, [ picker ]) ]);
 	},
 
 	orderedValues: function(root) {
-		var box = root.querySelector('[data-ordered]');
-		return box ? Array.prototype.map.call(box.querySelectorAll('[data-value]'), function(el) { return el.dataset.value; }) : [];
+		var list = root.querySelector('[data-ordered]');
+		return list ? Array.prototype.map.call(list.querySelectorAll('[data-value]'), function(el) { return el.dataset.value; }) : [];
 	},
 
 	// inject adds the shared stylesheet to <head> once. Re-renders are common

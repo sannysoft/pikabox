@@ -16,12 +16,12 @@ var MODES = [
 function showModal(view, data, row) {
 	row = row || { enabled: true, mode: 'fallback', members: [] };
 	var options = (data.targets || []).filter(function(t) { return t.id !== row.id; });
-	theme.modal(view, row.id ? _('Edit Outbound Group') : _('Add Outbound Group'), [
+	theme.modal(view, row.id ? _('Edit outbound group') : _('New outbound group'), [
 		theme.checkbox('enabled', row.enabled !== false, _('Enabled')),
 		E('label', {}, [ _('Name'), E('input', { 'class': 'cbi-input-text', 'name': 'name', 'value': row.name || '', 'placeholder': 'us-out' }) ]),
 		E('label', {}, [ _('Mode'), theme.select('mode', MODES, row.mode || 'fallback') ]),
 		E('div', {}, [
-			E('div', { 'class': 'singbox-manager-label', 'style': 'margin-bottom:6px' }, _('Members (order matters for fallback)')),
+			E('div', { 'class': 'singbox-manager-label', 'style': 'margin-bottom:6px' }, _('Members — drag to set the order (fallback tries them top to bottom)')),
 			theme.orderedList(row.members || [], options)
 		]),
 		E('p', { 'class': 'singbox-manager-inline-help' }, _('A subscription member stands for its N fastest filtered outbounds (fastest of them is used). Groups can nest. Fallback probes members in order every 30 s and switches to the first one that answers.'))
@@ -38,11 +38,13 @@ function showModal(view, data, row) {
 
 function renderMembers(group) {
 	return E('div', { 'class': 'singbox-manager-members' }, (group.member_info || []).length ? group.member_info.map(function(m, i) {
-		var cls = 'singbox-manager-member' + (m.id === group.now ? ' now' : '') + (m.available ? '' : ' off');
-		var title = m.available ? m.kind : _('%s — not available (disabled, broken, or nothing selected)').format(m.kind);
-		return E('span', { 'class': cls, 'title': title }, [
-			(group.mode === 'fallback' ? (i + 1) + '. ' : '') + (m.name || m.id) + (m.latency_ms ? ' · ' + m.latency_ms + ' ms' : '')
-		]);
+		var label = (group.mode === 'fallback' ? (i + 1) + '. ' : '') + (m.name || m.id) + (m.latency_ms ? ' · ' + m.latency_ms + ' ms' : '');
+		var chip = theme.pill(label, m.kind, m.available ? (m.id === group.now ? _('In use now') : '') : _('Not available (disabled, broken, or nothing selected)'));
+		if (m.id === group.now)
+			chip.style.boxShadow = '0 0 0 2px #2271b1';
+		if (!m.available)
+			chip.style.opacity = '.5';
+		return chip;
 	}) : [ E('span', { 'class': 'singbox-manager-hint' }, _('no members')) ]);
 }
 
