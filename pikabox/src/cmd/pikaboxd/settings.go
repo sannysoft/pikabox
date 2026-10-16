@@ -43,6 +43,7 @@ func settingsRPC(configPath string, _ json.RawMessage) map[string]any {
 			"sing_box_bin":   m.SingBoxBinary,
 		},
 		"versions", map[string]string{
+			"pikabox":  version,
 			"sing_box": singBoxVersion(m.SingBoxBinary),
 			"openwrt":  openwrtRelease(),
 		},

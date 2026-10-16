@@ -24,6 +24,8 @@ include $(INCLUDE_DIR)/package.mk
 include $(TOPDIR)/feeds/packages/lang/golang/golang-package.mk
 
 GO_PKG_BUILD_VARS+=GOFLAGS="-buildvcs=false"
+# Shown in the LuCI dashboard banner and Settings → About.
+GO_PKG_LDFLAGS_X:=main.version=$(PKG_VERSION)
 
 define Package/pikabox
   SECTION:=net

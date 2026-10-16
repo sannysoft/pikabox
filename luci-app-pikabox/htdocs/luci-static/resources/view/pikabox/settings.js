@@ -224,6 +224,7 @@ return view.extend({
 			E('div', { 'class': 'pikabox-section' }, [
 				E('h3', {}, [ _('About') ]),
 				E('div', { 'class': 'pikabox-grid' }, [
+					E('span', { 'class': 'pikabox-label' }, [ 'Pika-box' ]), E('span', {}, theme.text(v.pikabox)),
 					E('span', { 'class': 'pikabox-label' }, [ 'sing-box' ]), E('span', {}, theme.text(v.sing_box)),
 					E('span', { 'class': 'pikabox-label' }, [ 'OpenWrt' ]), E('span', {}, theme.text(v.openwrt))
 				])

@@ -1,7 +1,17 @@
-# Pika-box
+<p align="center">
+  <img src="assets/pikabox-logo.svg" width="160" alt="Pika-box logo: a pika peeking out of a cardboard box">
+</p>
 
-[![CI](https://github.com/sannysoft/pikabox/actions/workflows/ci.yml/badge.svg)](https://github.com/sannysoft/pikabox/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/sannysoft/pikabox?sort=semver)](https://github.com/sannysoft/pikabox/releases/latest)
+<h1 align="center">Pika-box</h1>
+
+<p align="center">
+  <em>sing-box for OpenWrt, with subscriptions that pick their fastest servers, fallback groups and rule-group routing.</em>
+</p>
+
+<p align="center">
+  <a href="https://github.com/sannysoft/pikabox/actions/workflows/ci.yml"><img src="https://github.com/sannysoft/pikabox/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/sannysoft/pikabox/releases/latest"><img src="https://img.shields.io/github/v/release/sannysoft/pikabox?sort=semver" alt="Release"></a>
+</p>
 
 **Pika-box** is a router-side manager for [sing-box](https://sing-box.sagernet.org/) on
 OpenWrt: a small Go daemon (`pikaboxd`) plus a LuCI app. You describe *what* goes *where*

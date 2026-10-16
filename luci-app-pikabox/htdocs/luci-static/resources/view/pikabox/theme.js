@@ -173,6 +173,14 @@ var CSS = [
 	'.pkb-drop:hover,.pkb-drop:focus-visible,.pkb-drop.pkb-over{border-color:#2271b1;background:rgba(34,113,177,.06);outline:none}',
 	'@media(max-width:760px){.pkb-backup{grid-template-columns:1fr}}',
 
+	/* ---- dashboard: brand banner ---- */
+	'.pkb-banner{display:flex;align-items:center;gap:12px;padding:4px 2px}',
+	'.pkb-banner img{flex:0 0 auto;width:44px;height:44px}',
+	'.pkb-banner-text{display:grid;gap:1px;min-width:0}',
+	'.pkb-banner-name{display:flex;align-items:baseline;gap:8px;font-size:20px;font-weight:800;letter-spacing:-.02em;line-height:1.1;color:var(--text-color-high)}',
+	'.pkb-banner-ver{font-size:11px;font-weight:600;letter-spacing:.02em;color:var(--text-color-medium);font-variant-numeric:tabular-nums}',
+	'.pkb-banner-tag{font-size:12px;color:var(--text-color-medium)}',
+
 	/* ---- dashboard: exit path ---- */
 	'.pkb-path{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(240px,1fr);gap:16px;align-items:start}',
 	'.pkb-hops{display:flex;flex-wrap:wrap;align-items:center;gap:8px}',

@@ -183,6 +183,7 @@ func collectStatus(configPath string) Status {
 	plan := render.BuildPlan(*cfg)
 	final := plan.Final(*cfg)
 	status := Status{
+		Version:         version,
 		Daemon:          err == nil,
 		ManagerEnabled:  cfg.Manager.Enabled,
 		ManagerPaused:   cfg.Manager.Paused,

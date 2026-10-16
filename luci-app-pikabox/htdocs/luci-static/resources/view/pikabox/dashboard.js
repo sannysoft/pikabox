@@ -682,6 +682,17 @@ function refreshConnections(view, force) {
 	});
 }
 
+// renderBanner is the small brand strip at the top of the dashboard.
+function renderBanner(data) {
+	return E('div', { 'class': 'pkb-banner' }, [
+		E('img', { 'src': L.resource('pikabox/logo.svg'), 'width': '44', 'height': '44', 'alt': '' }),
+		E('div', { 'class': 'pkb-banner-text' }, [
+			E('div', { 'class': 'pkb-banner-name' }, [ 'Pika-box', data.version ? E('span', { 'class': 'pkb-banner-ver' }, [ 'v' + String(data.version).replace(/^v/, '') ]) : '' ]),
+			E('div', { 'class': 'pkb-banner-tag' }, [ _('sing-box manager for OpenWrt') ])
+		])
+	]);
+}
+
 function renderLive(view, data) {
 	data = data || {};
 	var hist = pushHistory(view, data);
@@ -791,6 +802,7 @@ return view.extend({
 		theme.inject();
 
 		view.root = E('div', { 'class': 'pikabox-dashboard' }, [
+			renderBanner(data.status || {}),
 			renderLive(view, data.status || {}),
 			renderHealth(view, data.health),
 			renderConnections(view),

@@ -28,6 +28,9 @@ import (
 	"github.com/sannysoft/pikabox/internal/runtime"
 )
 
+// version is stamped at build time (-X main.version=…); "dev" otherwise.
+var version = "dev"
+
 const (
 	defaultConfigPath = "/etc/config/pikabox"
 	defaultSocketPath = managerconfig.DefaultSocketPath
@@ -48,6 +51,7 @@ type Status struct {
 	SelectedOutbound string     `json:"selected_outbound"`
 	SelectedName     string     `json:"selected_name"`
 	Hops             []chainHop `json:"hops"`
+	Version          string     `json:"version"`
 	Events           []Event    `json:"events"`
 	RuntimeMode      string     `json:"runtime_mode"`
 	Strategy         string     `json:"strategy"`
