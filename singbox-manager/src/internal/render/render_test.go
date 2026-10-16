@@ -430,3 +430,13 @@ func TestRenderPackageDefaultConfig(t *testing.T) {
 		t.Fatalf("default config rendered oddly:\n%s", data)
 	}
 }
+
+func TestRenderWithoutDNSServersDefinesBootstrap(t *testing.T) {
+	isolate(t)
+	cfg := baseConfig()
+	cfg.DNSServers = map[string]managerconfig.DNSServer{}
+	doc, data := renderDoc(t, cfg)
+	if len(doc.DNS.Servers) != 1 || doc.DNS.Servers[0]["tag"] != doc.Route.DefaultDomainResolver {
+		t.Fatalf("the referenced bootstrap resolver must be defined:\n%s", data)
+	}
+}

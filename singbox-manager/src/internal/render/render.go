@@ -435,7 +435,9 @@ func renderRuleSet(set managerconfig.RuleSet) map[string]any {
 func renderDNS(cfg managerconfig.Config, plan Plan, final string) *dnsConfig {
 	servers := enabledDNSServers(cfg)
 	if len(servers) == 0 {
-		return nil
+		// Outbounds and route.default_domain_resolver still reference the
+		// bootstrap tag, so it must exist even with no servers configured.
+		return &dnsConfig{Servers: []map[string]any{{"type": "local", "tag": syntheticBootstrapTag}}}
 	}
 	dns := &dnsConfig{}
 	for _, server := range servers {
