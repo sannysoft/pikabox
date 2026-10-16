@@ -378,7 +378,29 @@ func withAction(match map[string]any, outbound string) map[string]any {
 	return rule
 }
 
+// RuleLabel names one rendered route rule, index-aligned with route.rules
+// (and so with the Clash API's /rules), so a live connection's matched rule
+// can be traced back to the route that produced it.
+type RuleLabel struct {
+	Kind  string `json:"kind"`  // sniff | dns | device | route
+	ID    string `json:"id"`    // route or device ID
+	Group string `json:"group"` // rule group ID (routes)
+}
+
+// RouteLabels returns the label of every route rule Render would emit.
+func RouteLabels(cfg managerconfig.Config) []RuleLabel {
+	plan := BuildPlan(cfg)
+	_, labels := renderRouteLabeled(cfg, plan, plan.Final(cfg), domainResolvers{})
+	return labels
+}
+
 func renderRoute(cfg managerconfig.Config, plan Plan, final string, resolvers domainResolvers) routeConfig {
+	route, _ := renderRouteLabeled(cfg, plan, final, resolvers)
+	return route
+}
+
+func renderRouteLabeled(cfg managerconfig.Config, plan Plan, final string, resolvers domainResolvers) (routeConfig, []RuleLabel) {
+	labels := []RuleLabel{{Kind: "sniff"}}
 	route := routeConfig{
 		Final:                 final,
 		AutoDetectInterface:   true,
@@ -391,6 +413,7 @@ func renderRoute(cfg managerconfig.Config, plan Plan, final string, resolvers do
 			map[string]any{"inbound": []string{dnsInboundTag}, "action": "hijack-dns"},
 			map[string]any{"protocol": "dns", "action": "hijack-dns"},
 		)
+		labels = append(labels, RuleLabel{Kind: "dns"}, RuleLabel{Kind: "dns"})
 	}
 
 	sets := map[string]managerconfig.RuleSet{}
@@ -407,6 +430,7 @@ func renderRoute(cfg managerconfig.Config, plan Plan, final string, resolvers do
 			}
 			if len(sources) > 0 {
 				route.Rules = append(route.Rules, map[string]any{"source_ip_cidr": normalizeSourceCIDRs(sources), "outbound": device.Group})
+				labels = append(labels, RuleLabel{Kind: "device", ID: device.ID})
 			}
 		}
 		for _, entry := range cfg.Routes {
@@ -415,6 +439,7 @@ func renderRoute(cfg managerconfig.Config, plan Plan, final string, resolvers do
 			}
 			if match := matchRule(cfg, []string{entry.RuleGroup}, sets); match != nil {
 				route.Rules = append(route.Rules, withAction(match, entry.Outbound))
+				labels = append(labels, RuleLabel{Kind: "route", ID: entry.ID, Group: entry.RuleGroup})
 			}
 		}
 	}
@@ -425,7 +450,7 @@ func renderRoute(cfg managerconfig.Config, plan Plan, final string, resolvers do
 	for _, id := range sortedKeys(sets) {
 		route.RuleSet = append(route.RuleSet, renderRuleSet(sets[id]))
 	}
-	return route
+	return route, labels
 }
 
 func renderRuleSet(set managerconfig.RuleSet) map[string]any {

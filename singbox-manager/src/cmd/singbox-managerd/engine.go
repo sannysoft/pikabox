@@ -43,6 +43,7 @@ func refreshSubscription(configPath string, id string) (managerconfig.Subscripti
 		return managerconfig.SubscriptionState{}, fmt.Errorf("subscription %q not found", id)
 	}
 	fail := func(err error) (managerconfig.SubscriptionState, error) {
+		recordEvent("error", "subscription %s refresh failed: %v", sub.Name, err)
 		_ = managerconfig.MarkSubscription(configPath, id, "", err.Error())
 		return managerconfig.SubscriptionState{}, err
 	}
@@ -167,6 +168,7 @@ func probeAll(configPath string, subs []string, withOutbounds bool) map[string]m
 	now := time.Now().UTC().Format(time.RFC3339)
 	for tag, result := range results {
 		stored[tag] = managerconfig.ProbeResult{Health: result.Health, LatencyMS: result.LatencyMS, Error: result.Error, CheckedAt: now}
+		recordProbe(tag, stored[tag])
 	}
 	// Forget results for candidates no longer matched by any subscription.
 	known := map[string]bool{}
@@ -199,11 +201,26 @@ func probeAll(configPath string, subs []string, withOutbounds bool) map[string]m
 			continue
 		}
 		changed = true
-		log.Printf("subscription %s: selected %v", id, selected)
+		names := make([]string, 0, len(selected))
+		for _, tag := range selected {
+			names = append(names, displayName(cfg, tag))
+		}
+		recordEvent("select", "%s now uses %s", cfg.Subscriptions[id].Name, strings.Join(names, ", "))
+	}
+	// One history point per subscription (its best alive candidate).
+	for id, state := range states {
+		best := managerconfig.ProbeResult{Health: "down", CheckedAt: now}
+		for _, tag := range state.Matched {
+			if r := stored[tag]; r.Health == "ok" && (best.Health != "ok" || r.LatencyMS < best.LatencyMS) {
+				best = r
+			}
+		}
+		recordProbe(id, best)
 	}
 	if changed {
 		reloadIfRunning(configPath)
 	}
+	recordGroupHistory(*cfg)
 	return stored
 }
 
@@ -256,7 +273,7 @@ func reloadIfRunning(configPath string) {
 		return
 	}
 	if _, err := runtime.Control(*cfg, runtime.ActionReload, runtime.DefaultPaths, render.Render); err != nil {
-		log.Printf("reload failed: %v", err)
+		recordEvent("error", "reload failed: %v", err)
 	}
 }
 
@@ -272,9 +289,11 @@ func downloadRuleSets(cfg managerconfig.Config, force bool) (bool, []string) {
 			continue
 		}
 		if _, err := ruleset.Download(context.Background(), set, proxy); err != nil {
+			setRuleSetError(set.URL, err)
 			errs = append(errs, fmt.Sprintf("%s: %v", set.URL, err))
 			continue
 		}
+		setRuleSetError(set.URL, nil)
 		updated = true
 	}
 	return updated, errs
@@ -389,10 +408,31 @@ func enforceFallback(cfg managerconfig.Config) {
 			continue
 		}
 		if err := api.choose(group, target); err != nil {
-			log.Printf("fallback %s: %v", group, err)
+			recordEvent("error", "fallback %s: %v", group, err)
 			continue
 		}
-		log.Printf("fallback %s: switched to %s", group, target)
+		recordEvent("switch", "%s switched to %s (was %s)", cfg.OutboundGroups[group].Name, displayName(&cfg, target), displayName(&cfg, firstNonEmptyString(proxies[group].Now, "—")))
+	}
+}
+
+// recordGroupHistory adds one point per group: the live delay of the member
+// it currently uses.
+func recordGroupHistory(cfg managerconfig.Config) {
+	api := newClashAPI(cfg)
+	if api == nil || managedRuntimePID(runtime.DefaultPaths) == 0 {
+		return
+	}
+	proxies, err := api.proxies()
+	if err != nil {
+		return
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	for id := range cfg.OutboundGroups {
+		result := managerconfig.ProbeResult{Health: "down", CheckedAt: now}
+		if delay := proxies[proxies[id].Now].lastDelay(); delay > 0 {
+			result = managerconfig.ProbeResult{Health: "ok", LatencyMS: delay, CheckedAt: now}
+		}
+		recordProbe(id, result)
 	}
 }
 

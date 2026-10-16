@@ -41,26 +41,28 @@ type Status struct {
 	SingBoxPID     int  `json:"sing_box_pid"`
 	// Final is the effective route.final target; Chain the groups traversed
 	// from it (via each group's live selection) to SelectedOutbound.
-	Final            string   `json:"final"`
-	ActiveGroup      string   `json:"active_group"`
-	Chain            []string `json:"chain"`
-	ChainNames       []string `json:"chain_names"`
-	SelectedOutbound string   `json:"selected_outbound"`
-	SelectedName     string   `json:"selected_name"`
-	RuntimeMode      string   `json:"runtime_mode"`
-	Strategy         string   `json:"strategy"`
-	Health           string   `json:"health"`
-	LatencyMS        int      `json:"latency_ms"`
-	MemoryKB         uint64   `json:"memory_kb"`
-	Warnings         []string `json:"warnings"`
-	Connections      int      `json:"connections"`
-	RxBytes          uint64   `json:"rx_bytes"`
-	TxBytes          uint64   `json:"tx_bytes"`
-	TProxyEnabled    bool     `json:"tproxy_enabled"`
-	DNSHijack        bool     `json:"dns_hijack"`
-	KillSwitch       bool     `json:"kill_switch"`
-	NftablesInclude  string   `json:"nftables_include"`
-	TUNEnabled       bool     `json:"tun_enabled"`
+	Final            string     `json:"final"`
+	ActiveGroup      string     `json:"active_group"`
+	Chain            []string   `json:"chain"`
+	ChainNames       []string   `json:"chain_names"`
+	SelectedOutbound string     `json:"selected_outbound"`
+	SelectedName     string     `json:"selected_name"`
+	Hops             []chainHop `json:"hops"`
+	Events           []Event    `json:"events"`
+	RuntimeMode      string     `json:"runtime_mode"`
+	Strategy         string     `json:"strategy"`
+	Health           string     `json:"health"`
+	LatencyMS        int        `json:"latency_ms"`
+	MemoryKB         uint64     `json:"memory_kb"`
+	Warnings         []string   `json:"warnings"`
+	Connections      int        `json:"connections"`
+	RxBytes          uint64     `json:"rx_bytes"`
+	TxBytes          uint64     `json:"tx_bytes"`
+	TProxyEnabled    bool       `json:"tproxy_enabled"`
+	DNSHijack        bool       `json:"dns_hijack"`
+	KillSwitch       bool       `json:"kill_switch"`
+	NftablesInclude  string     `json:"nftables_include"`
+	TUNEnabled       bool       `json:"tun_enabled"`
 	// StaleDataPath is set when sing-box is not running but its firewall/policy
 	// routing is still installed, which leaves in-scope devices without internet.
 	StaleDataPath bool `json:"stale_datapath"`

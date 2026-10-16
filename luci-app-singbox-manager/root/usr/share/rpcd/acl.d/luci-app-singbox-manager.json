@@ -4,9 +4,11 @@
 		"read": {
 			"ubus": {
 				"singbox.manager": [
+					"connections",
 					"devices",
 					"dns",
 					"filter_preview",
+					"health",
 					"latency_test",
 					"logs",
 					"outbound_groups",
@@ -29,6 +31,7 @@
 			"ubus": {
 				"singbox.manager": [
 					"cleanup",
+					"connection_close",
 					"dns_rule_delete",
 					"dns_rule_set",
 					"dns_server_delete",

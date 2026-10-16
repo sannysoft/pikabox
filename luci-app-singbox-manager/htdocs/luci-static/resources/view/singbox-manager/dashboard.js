@@ -74,6 +74,10 @@ var callLogs = rpc.declare({
 	expect: { '': {} }
 });
 
+var callHealth = rpc.declare({ object: 'singbox.manager', method: 'health', expect: { '': {} } });
+var callConnections = rpc.declare({ object: 'singbox.manager', method: 'connections', expect: { '': {} } });
+var callCloseConnection = rpc.declare({ object: 'singbox.manager', method: 'connection_close', params: [ 'id' ], expect: { '': {} } });
+
 var MODE_OPTIONS = [ 'direct', 'rule', 'global' ];
 var POLL_INTERVAL = 5;
 var LOG_LINES = 300;
@@ -241,7 +245,7 @@ function renderHero(view, data) {
 			])
 		]),
 		E('div', { 'class': 'singbox-manager-hero-facts' }, [
-			E('div', {}, [ E('span', {}, _('Final')), E('strong', {}, theme.text(data.final)) ]),
+			E('div', {}, [ E('span', {}, _('Final')), E('strong', {}, theme.text(((data.hops || [])[0] || {}).name || data.final)) ]),
 			E('div', {}, [ E('span', {}, _('Mode')), modeSelect ]),
 			E('div', {}, [ E('span', {}, _('Exit')), E('strong', { 'title': (data.chain || []).concat([ data.selected_outbound || '' ]).join(' → ') }, theme.text(data.selected_name || data.selected_outbound)) ]),
 			E('div', {}, [ E('span', {}, _('Health')), E('strong', { 'class': healthClass(data.health) }, [ health ]) ])
@@ -292,13 +296,7 @@ function renderToolbar(view, data) {
 					reportResult(result, _('Configuration is valid'), _('Configuration has errors'));
 				});
 			})
-		}, _('Validate')),
-		E('button', {
-			'class': 'btn cbi-button',
-			'click': ui.createHandlerFn(view, function() {
-				return runAction(view, callHealthCheck, _('All outbounds and subscriptions re-tested'), _('Health check failed'));
-			})
-		}, _('Check Health'))
+		}, _('Validate'))
 	]);
 }
 
@@ -322,6 +320,260 @@ function renderStaleAlert(view, data) {
 	]);
 }
 
+// ---- exit path -------------------------------------------------------------
+
+function ago(iso) {
+	if (!iso)
+		return '';
+	var s = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000));
+	if (s < 60)
+		return _('%ds ago').format(s);
+	if (s < 3600)
+		return _('%dm ago').format(Math.floor(s / 60));
+	if (s < 86400)
+		return _('%dh ago').format(Math.floor(s / 3600));
+	return _('%dd ago').format(Math.floor(s / 86400));
+}
+
+function hopKind(kind) {
+	return kind === 'server' ? 'subscription' : kind;
+}
+
+// renderPath shows the live exit: default route → each group's current
+// choice → the server actually carrying traffic, next to recent switches.
+function renderPath(data) {
+	var hops = data.hops || [];
+	var chain;
+	if (!data.running) {
+		chain = E('div', { 'class': 'sbm-empty' }, [ _('Not running — start the proxy to see where traffic exits.') ]);
+	} else if (!hops.length) {
+		chain = E('div', { 'class': 'sbm-hops' }, [ E('span', { 'class': 'sbm-hop-start' }, [ _('Everything else') ]), E('span', { 'class': 'sbm-hop-arrow' }, [ '→' ]), theme.pill(data.final || 'direct', 'builtin') ]);
+	} else {
+		var parts = [ E('span', { 'class': 'sbm-hop-start' }, [ _('Everything else') ]) ];
+		hops.forEach(function(hop, i) {
+			var leaf = i === hops.length - 1;
+			var wrap = E('div', { 'class': 'sbm-hopwrap' }, [ E('span', { 'class': 'sbm-hop-arrow', 'aria-hidden': 'true' }, [ '→' ]) ]);
+			parts.push(wrap);
+			var meta = [];
+			if (hop.detail)
+				meta.push(hop.detail === 'fallback' ? _('first alive') : _('fastest'));
+			if (hop.latency_ms)
+				meta.push(hop.latency_ms + ' ms');
+			wrap.appendChild(E('div', { 'class': 'sbm-hop' + (leaf ? ' sbm-leaf' : '') }, [
+				theme.pill(hop.name, hopKind(hop.kind) === 'direct' || hopKind(hop.kind) === 'block' ? 'builtin' : hopKind(hop.kind)),
+				E('span', { 'class': 'sbm-hop-meta' }, [ meta.join(' · ') || (leaf ? _('exit') : '') ])
+			]));
+		});
+		chain = E('div', { 'class': 'sbm-hops' }, parts);
+	}
+	var events = data.events || [];
+	return E('div', { 'class': 'singbox-manager-section' }, [
+		E('div', { 'class': 'sbm-path' }, [
+			E('div', {}, [ E('h3', { 'style': 'margin:0 0 10px' }, _('Exit path')), chain ]),
+			E('div', {}, [
+				E('h3', { 'style': 'margin:0 0 10px' }, _('Recent changes')),
+				events.length ? E('ul', { 'class': 'sbm-timeline' }, events.map(function(ev) {
+					return E('li', { 'class': 'sbm-ev-' + ev.kind }, [ E('time', { 'datetime': ev.time, 'title': new Date(ev.time).toLocaleString() }, [ ago(ev.time) ]), ev.message ]);
+				})) : E('p', { 'class': 'singbox-manager-hint' }, _('No switches or selection changes since the daemon started.'))
+			])
+		])
+	]);
+}
+
+// ---- health board ----------------------------------------------------------
+
+function sparkSmall(points) {
+	var box = E('div', { 'class': 'sbm-spark' });
+	if (!points || points.length < 2)
+		return box;
+	var w = 200, h = 28, pad = 3;
+	var max = points.reduce(function(m, p) { return Math.max(m, p.ms); }, 1);
+	var step = w / (points.length - 1);
+	var path = '', dots = '';
+	points.forEach(function(p, i) {
+		var x = (i * step).toFixed(1);
+		if (p.ms > 0) {
+			var y = (h - pad - (p.ms / max) * (h - 2 * pad)).toFixed(1);
+			path += (path && points[i - 1] && points[i - 1].ms > 0 ? 'L' : 'M') + x + ',' + y + ' ';
+		} else {
+			dots += '<rect x="' + (x - 1.5) + '" y="' + (h - 4) + '" width="3" height="3" fill="#b42318"/>';
+		}
+	});
+	// Numbers only are interpolated, so innerHTML is safe here.
+	box.innerHTML = '<svg viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="none" aria-hidden="true"><path d="' + path + '" fill="none" stroke="#2271b1" stroke-width="1.6" vector-effect="non-scaling-stroke"/>' + dots + '</svg>';
+	return box;
+}
+
+function healthCard(item) {
+	var ms;
+	if (item.health === 'ok' && item.latency_ms)
+		ms = E('div', { 'class': 'sbm-card-ms' }, [ String(item.latency_ms), E('small', {}, [ 'ms' ]) ]);
+	else if (item.health === 'idle')
+		ms = E('div', { 'class': 'sbm-card-ms idle' }, [ _('off') ]);
+	else if (item.health === 'unknown')
+		ms = E('div', { 'class': 'sbm-card-ms idle' }, [ _('not tested') ]);
+	else
+		ms = E('div', { 'class': 'sbm-card-ms down', 'title': item.error || '' }, [ item.health === 'error' ? _('error') : _('down') ]);
+	var foot = item.now ? _('using %s').format(item.now) : (item.detail || '');
+	var since = item.health === 'ok' ? '' : (item.last_ok ? _('ok %s').format(ago(item.last_ok)) : (item.error ? item.error : ''));
+	return E('div', { 'class': 'sbm-card' + (item.health === 'down' || item.health === 'error' ? ' sbm-down' : ''), 'title': item.error || '' }, [
+		E('div', { 'class': 'sbm-card-head' }, [ theme.pill(item.name, item.kind), ms ]),
+		sparkSmall(item.history),
+		(foot || since) ? E('div', { 'class': 'sbm-card-foot' }, [ E('span', {}, [ foot ]), E('span', { 'title': since }, [ since ]) ]) : ''
+	]);
+}
+
+function renderHealth(view, data) {
+	data = data || {};
+	var warnings = data.warnings || [];
+	var items = data.items || [];
+	var base = L.url('admin/services/singbox-manager');
+	return E('div', { 'class': 'singbox-manager-section sbm-health' }, [
+		E('div', { 'class': 'singbox-manager-section-header' }, [
+			E('h3', {}, _('Health')),
+			E('button', { 'class': 'btn cbi-button', 'click': ui.createHandlerFn(view, function() {
+				return callHealthCheck().then(function(result) {
+					reportResult(result, _('All outbounds and subscriptions re-tested'), _('Re-test failed'));
+					return refreshHealth(view);
+				});
+			}) }, _('Re-test all'))
+		]),
+		warnings.length ? E('div', { 'class': 'sbm-warnings' }, warnings.map(function(w) {
+			return E('div', { 'class': 'sbm-warning' + (w.level === 'error' ? ' sbm-error' : ''), 'role': w.level === 'error' ? 'alert' : null }, [
+				E('strong', {}, theme.text(w.title)),
+				E('span', {}, theme.text(w.message)),
+				w.page && w.page !== 'dashboard' ? E('a', { 'href': base + '/' + w.page }, [ _('Open') + ' →' ]) : ''
+			]);
+		})) : '',
+		items.length ? E('div', { 'class': 'sbm-board' }, items.map(healthCard))
+			: E('div', { 'class': 'sbm-empty' }, [ _('Nothing to monitor yet — add an outbound or a subscription.') ])
+	]);
+}
+
+function refreshHealth(view) {
+	return callHealth().then(function(data) {
+		var current = view.root && view.root.querySelector('.sbm-health');
+		if (current)
+			current.parentNode.replaceChild(renderHealth(view, data), current);
+	});
+}
+
+// ---- connections -----------------------------------------------------------
+
+function formatDuration(iso) {
+	var s = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000));
+	if (s < 60)
+		return s + 's';
+	if (s < 3600)
+		return Math.floor(s / 60) + 'm ' + (s % 60) + 's';
+	return Math.floor(s / 3600) + 'h ' + Math.floor((s % 3600) / 60) + 'm';
+}
+
+function connChain(c) {
+	return E('div', { 'class': 'sbm-chain' }, (c.chain || []).map(function(name, i) {
+		var kind = (c.chain_kind || [])[i];
+		return theme.pill(name, kind === 'direct' || kind === 'block' ? 'builtin' : kind);
+	}));
+}
+
+function renderConnections(view) {
+	view.conn = view.conn || { prev: {}, filter: '', paused: false };
+	var state = view.conn;
+	var body = E('tbody');
+	var stats = E('div', { 'class': 'sbm-conn-stats', 'aria-live': 'polite' });
+	var filter = E('input', { 'type': 'search', 'placeholder': _('Filter host, device, route, exit'), 'aria-label': _('Filter connections'), 'value': state.filter });
+	var pause = E('button', { 'type': 'button', 'class': 'btn cbi-button' }, [ _('Pause') ]);
+	filter.addEventListener('input', function() { state.filter = filter.value.trim().toLowerCase(); draw(); });
+	pause.addEventListener('click', function() {
+		state.paused = !state.paused;
+		pause.textContent = state.paused ? _('Resume') : _('Pause');
+	});
+
+	var draw = function() {
+		var list = state.list || [];
+		var q = state.filter;
+		var rows = list.filter(function(c) {
+			if (!q)
+				return true;
+			return [ c.host, c.device, c.source, c.route ].concat(c.chain || []).join(' ').toLowerCase().indexOf(q) >= 0;
+		});
+		body.replaceChildren.apply(body, rows.length ? rows.map(function(c) {
+			var close = E('button', { 'type': 'button', 'class': 'sbm-x', 'aria-label': _('Close connection to %s').format(c.host), 'title': _('Close connection') }, [ '×' ]);
+			close.addEventListener('click', function() {
+				callCloseConnection(c.id).then(function() { return refreshConnections(view, true); });
+			});
+			return E('tr', { 'class': c.rate > 64 * 1024 ? 'sbm-hot' : '' }, [
+				E('td', {}, [
+					E('div', { 'class': 'sbm-host', 'title': c.host + ':' + c.port }, theme.text(c.host)),
+					E('span', { 'class': 'sbm-sub' }, [ (c.network || '') + ' :' + (c.port || '') ])
+				]),
+				E('td', {}, [ E('span', {}, theme.text(c.device || c.source)), c.device ? E('span', { 'class': 'sbm-sub' }, theme.text(c.source)) : '' ]),
+				E('td', { 'title': c.rule || '' }, [ c.route_key === 'final' ? E('span', { 'class': 'singbox-manager-hint' }, [ c.route ]) : theme.pill(c.route, 'rule') ]),
+				E('td', {}, connChain(c)),
+				E('td', { 'class': 'sbm-num' }, [ c.rate_down ? formatRate(c.rate_down) : '–', E('span', { 'class': 'sbm-sub' }, [ c.rate_up ? '↑ ' + formatRate(c.rate_up) : '' ]) ]),
+				E('td', { 'class': 'sbm-num' }, [ formatBytes(c.download), E('span', { 'class': 'sbm-sub' }, [ '↑ ' + formatBytes(c.upload) ]) ]),
+				E('td', { 'class': 'sbm-num' }, [ formatDuration(c.start) ]),
+				E('td', {}, close)
+			]);
+		}) : [ E('tr', {}, E('td', { 'colspan': 8, 'class': 'sbm-empty', 'style': 'border:0' }, [
+			state.running === false ? _('Not running.') : (q ? _('No connection matches the filter.') : _('No open connections.'))
+		])) ]);
+		var down = list.reduce(function(sum, c) { return sum + (c.rate_down || 0); }, 0);
+		var up = list.reduce(function(sum, c) { return sum + (c.rate_up || 0); }, 0);
+		stats.replaceChildren(
+			E('span', {}, [ q ? _('%d of %d open').format(rows.length, list.length) : _('%d open').format(list.length) ]),
+			E('span', {}, [ '↓ ' + formatRate(down) ]),
+			E('span', {}, [ '↑ ' + formatRate(up) ])
+		);
+	};
+	state.draw = draw;
+
+	return E('div', { 'class': 'singbox-manager-section sbm-conns' }, [
+		E('div', { 'class': 'sbm-conn-tools' }, [
+			E('h3', { 'style': 'margin:0' }, _('Connections')),
+			stats,
+			E('div', { 'class': 'singbox-manager-actions' }, [ E('label', { 'class': 'sbm-search' }, [ filter ]), pause ])
+		]),
+		E('div', { 'class': 'sbm-conn-wrap' }, E('table', { 'class': 'sbm-conn' }, [
+			E('thead', {}, E('tr', {}, [
+				E('th', {}, _('Destination')), E('th', {}, _('Device')), E('th', {}, _('Route')), E('th', {}, _('Exit')),
+				E('th', { 'class': 'sbm-num' }, _('Speed')), E('th', { 'class': 'sbm-num' }, _('Total')), E('th', { 'class': 'sbm-num' }, _('Age')), E('th')
+			])),
+			body
+		]))
+	]);
+}
+
+// refreshConnections polls the connection list and derives per-connection
+// speed from the byte counters' change since the previous poll.
+function refreshConnections(view, force) {
+	var state = view.conn;
+	if (!state || (state.paused && !force))
+		return Promise.resolve();
+	return callConnections().then(function(data) {
+		var now = Date.now();
+		var prev = state.prev || {};
+		var next = {};
+		var list = (data && data.connections) || [];
+		list.forEach(function(c) {
+			var p = prev[c.id];
+			if (p && now > p.t) {
+				var dt = (now - p.t) / 1000;
+				c.rate_down = Math.max(0, (c.download - p.down) / dt);
+				c.rate_up = Math.max(0, (c.upload - p.up) / dt);
+			}
+			c.rate = (c.rate_down || 0) + (c.rate_up || 0);
+			next[c.id] = { t: now, down: c.download, up: c.upload };
+		});
+		list.sort(function(a, b) { return (b.rate || 0) - (a.rate || 0) || (a.start < b.start ? 1 : -1); });
+		state.prev = next;
+		state.list = list;
+		state.running = data && data.running;
+		if (state.draw)
+			state.draw();
+	});
+}
+
 function renderLive(view, data) {
 	data = data || {};
 	var hist = pushHistory(view, data);
@@ -331,13 +583,13 @@ function renderLive(view, data) {
 		(data.warnings && data.warnings.length)
 			? E('div', { 'class': 'singbox-manager-warning' }, data.warnings.map(function(w) { return E('div', {}, theme.text(w)); }))
 			: '',
+		renderPath(data),
 		renderThroughput(data, hist),
 		E('div', { 'class': 'singbox-manager-metrics' }, [
 			metric(_('Daemon'), data.daemon ? _('Online') : _('Offline'), data.daemon ? 'ok' : 'error'),
 			metric(_('Connections'), String(data.connections || 0)),
 			metric(_('Memory'), formatBytes((data.memory_kb || 0) * 1024)),
-			metric(_('Final mode'), data.strategy || '-'),
-			metric(_('Route chain'), (data.chain_names || data.chain || []).concat(data.selected_name || data.selected_outbound ? [ data.selected_name || data.selected_outbound ] : []).join(' → ') || '-')
+			metric(_('Final mode'), data.strategy === 'fallback' ? _('first alive') : (data.strategy === 'urltest' ? _('fastest') : '-'))
 		]),
 		renderToolbar(view, data)
 	]);
@@ -421,8 +673,8 @@ return view.extend({
 	handleReset: null,
 
 	load: function() {
-		return Promise.all([ callStatus(), callLogs(LOG_LINES) ]).then(function(results) {
-			return { status: results[0], logs: results[1] };
+		return Promise.all([ callStatus(), callLogs(LOG_LINES), callHealth() ]).then(function(results) {
+			return { status: results[0], logs: results[1], health: results[2] };
 		});
 	},
 
@@ -433,10 +685,15 @@ return view.extend({
 
 		view.root = E('div', { 'class': 'singbox-manager-dashboard' }, [
 			renderLive(view, data.status || {}),
+			renderHealth(view, data.health),
+			renderConnections(view),
 			renderLogs(view, data.logs || {})
 		]);
+		refreshConnections(view, true);
 
 		poll.add(function() { return refreshLive(view, false); }, POLL_INTERVAL);
+		poll.add(function() { return refreshHealth(view); }, 15);
+		poll.add(function() { return refreshConnections(view, false); }, 3);
 		poll.add(function() { return refreshLogs(view); }, POLL_INTERVAL);
 
 		return view.root;

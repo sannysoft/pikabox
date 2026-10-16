@@ -51,6 +51,10 @@ var methods = map[string]rpcMethod{
 		return ok("results", probeAll(p, nil, true))
 	}},
 
+	"health":           {nil, quick, false, healthRPC},
+	"connections":      {nil, quick, false, connectionsRPC},
+	"connection_close": {map[string]any{"id": "string"}, quick, false, closeConnectionRPC},
+
 	"outbounds":       {nil, quick, false, listOutbounds},
 	"outbound_set":    {map[string]any{"outbound": "object"}, 30 * time.Second, true, setOutbound},
 	"outbound_delete": {map[string]any{"id": "string"}, 30 * time.Second, true, deleteOf("outbound")},
@@ -197,6 +201,7 @@ func collectStatus(configPath string) Status {
 	if group, isGroup := cfg.OutboundGroups[final]; isGroup {
 		status.Strategy = group.Mode
 	}
+	status.Events = recentEvents(6)
 	if pid > 0 {
 		status.MemoryKB = readRSS(pid)
 		if api := newClashAPI(*cfg); api != nil {
@@ -211,6 +216,7 @@ func collectStatus(configPath string) Status {
 					status.ChainNames = append(status.ChainNames, displayName(cfg, tag))
 				}
 				status.SelectedName = displayName(cfg, leaf)
+				status.Hops = chainHops(cfg, append(append([]string{}, status.Chain...), leaf), proxies)
 				if delay := proxies[leaf].lastDelay(); delay > 0 {
 					status.LatencyMS = delay
 					status.Health = "ok"
@@ -336,6 +342,7 @@ func testOutbounds(configPath string, raw json.RawMessage) map[string]any {
 	stored := managerconfig.LoadProbeResults()
 	stored[params.ID] = managerconfig.ProbeResult{Health: result.Health, LatencyMS: result.LatencyMS, Error: result.Error, CheckedAt: time.Now().UTC().Format(time.RFC3339)}
 	_ = managerconfig.SaveProbeResults(stored)
+	recordProbe(params.ID, stored[params.ID])
 	return ok("result", stored[params.ID])
 }
 

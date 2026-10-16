@@ -440,3 +440,22 @@ func TestRenderWithoutDNSServersDefinesBootstrap(t *testing.T) {
 		t.Fatalf("the referenced bootstrap resolver must be defined:\n%s", data)
 	}
 }
+
+func TestRouteLabelsAlignWithRules(t *testing.T) {
+	isolate(t)
+	cfg := baseConfig()
+	cfg.RuleGroups["ru"] = managerconfig.RuleGroup{ID: "ru", Enabled: true, Rules: []string{"domain_suffix:ru"}}
+	cfg.Routes = []managerconfig.Route{
+		{ID: "route_1", Enabled: true, RuleGroup: "ru", Outbound: "direct"},
+		{ID: "route_2", Enabled: false, RuleGroup: "ru", Outbound: "block"},
+		{ID: "route_3", Enabled: true, RuleGroup: "ru", Outbound: "block"},
+	}
+	doc, _ := renderDoc(t, cfg)
+	labels := RouteLabels(cfg)
+	if len(labels) != len(doc.Route.Rules) {
+		t.Fatalf("%d labels for %d rules", len(labels), len(doc.Route.Rules))
+	}
+	if labels[0].Kind != "sniff" || labels[1].ID != "route_1" || labels[2].ID != "route_3" || labels[2].Group != "ru" {
+		t.Fatalf("labels = %#v", labels)
+	}
+}
