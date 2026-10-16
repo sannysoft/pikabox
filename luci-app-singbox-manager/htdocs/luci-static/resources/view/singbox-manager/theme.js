@@ -253,6 +253,8 @@ var CSS = [
 	'.modal:has(.sbm-wide){width:min(880px,94vw)!important;max-width:none!important}',
 	'.singbox-manager-modal-form.sbm-wide{min-width:0;width:100%}',
 
+	/* own chevron: the native arrow sits against the border in Chrome/macOS */
+	'.sbm-rules select,.sbm-route select,.sbm-final select,.sbm-add select,.modal .singbox-manager-modal-form select{-webkit-appearance:none;appearance:none;padding-right:30px!important;background-image:url(\"data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 width=%2710%27 height=%276%27 viewBox=%270 0 10 6%27%3E%3Cpath d=%27M1 1l4 4 4-4%27 fill=%27none%27 stroke=%27%23888%27 stroke-width=%271.5%27 stroke-linecap=%27round%27 stroke-linejoin=%27round%27/%3E%3C/svg%3E\");background-repeat:no-repeat;background-position:right 10px center;background-size:10px 6px}',
 	'@media(prefers-reduced-motion:reduce){.sbm-item,.sbm-switch span,.sbm-switch span:before{transition:none}}',
 	'@media(max-width:760px){.sbm-route,.sbm-final{grid-template-columns:28px 44px minmax(0,1fr) 28px}.sbm-route .sbm-arrow,.sbm-final .sbm-arrow{display:none}.sbm-route>select:nth-of-type(2),.sbm-final>select{grid-column:3}}',
 	'.singbox-manager-mono{font-family:monospace;font-size:12px}',
