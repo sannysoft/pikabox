@@ -90,7 +90,14 @@ func Validate(cfg Config) error {
 		}
 	}
 
+	routed := map[string]string{}
 	for _, route := range cfg.Routes {
+		// A rule group routes to one place: a second route for it would be
+		// dead (first match wins) or contradict the first.
+		if other, dup := routed[route.RuleGroup]; dup {
+			errors = append(errors, fmt.Sprintf("route.%s: rule group %q is already routed by route.%s", route.ID, route.RuleGroup, other))
+		}
+		routed[route.RuleGroup] = route.ID
 		if _, ok := cfg.RuleGroups[route.RuleGroup]; !ok {
 			errors = append(errors, fmt.Sprintf("route.%s.rule_group references missing %q", route.ID, route.RuleGroup))
 		}

@@ -75,15 +75,18 @@ func TestUpsertRoundTrip(t *testing.T) {
 func TestSetRoutingPreservesOrder(t *testing.T) {
 	path := writeConfig(t, sampleConfig)
 	routes := []Route{
-		{Enabled: true, RuleGroup: "ru", Outbound: "direct"},
 		{Enabled: false, RuleGroup: "tg", Outbound: "vp1"},
-		{Enabled: true, RuleGroup: "tg", Outbound: "block"},
+		{Enabled: true, RuleGroup: "ru", Outbound: "direct"},
 	}
 	if err := SetRouting(path, "vp1", routes); err != nil {
 		t.Fatal(err)
 	}
+	dup := append(append([]Route{}, routes...), Route{Enabled: true, RuleGroup: "tg", Outbound: "block"})
+	if err := SetRouting(path, "vp1", dup); err == nil || !strings.Contains(err.Error(), "already routed") {
+		t.Fatalf("a rule group routed twice must be rejected, got %v", err)
+	}
 	cfg := mustLoad(t, path)
-	if cfg.Manager.Final != "vp1" || len(cfg.Routes) != 3 {
+	if cfg.Manager.Final != "vp1" || len(cfg.Routes) != 2 {
 		t.Fatalf("final=%q routes=%#v", cfg.Manager.Final, cfg.Routes)
 	}
 	for i, want := range routes {

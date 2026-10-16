@@ -185,6 +185,9 @@ func TestRenderRoutes(t *testing.T) {
 	}}
 	cfg.RuleGroups["ru"] = managerconfig.RuleGroup{ID: "ru", Enabled: true, Rules: []string{"domain_suffix:ru", "domain_suffix:su"}}
 	cfg.RuleGroups["off"] = managerconfig.RuleGroup{ID: "off", Enabled: false, Rules: []string{"domain:x.com"}}
+	cfg.RuleGroups["ru_ghost"] = managerconfig.RuleGroup{ID: "ru_ghost", Enabled: true, Rules: []string{"domain_suffix:ru"}}
+	cfg.RuleGroups["tg_off"] = cfg.RuleGroups["tg"]
+	cfg.RuleGroups["tg_block"] = cfg.RuleGroups["tg"]
 	set := managerconfig.RemoteRuleSet("https://example.com/geoip-telegram.srs")
 	if err := os.WriteFile(set.Path, []byte("srs"), 0644); err != nil {
 		t.Fatal(err)
@@ -192,10 +195,10 @@ func TestRenderRoutes(t *testing.T) {
 	cfg.Routes = []managerconfig.Route{
 		{ID: "route_1", Enabled: true, RuleGroup: "ru", Outbound: "direct"},
 		{ID: "route_2", Enabled: true, RuleGroup: "tg", Outbound: "js"},
-		{ID: "route_3", Enabled: true, RuleGroup: "ru", Outbound: "ghost_group"},
-		{ID: "route_4", Enabled: false, RuleGroup: "tg", Outbound: "block"},
+		{ID: "route_3", Enabled: true, RuleGroup: "ru_ghost", Outbound: "ghost_group"},
+		{ID: "route_4", Enabled: false, RuleGroup: "tg_off", Outbound: "block"},
 		{ID: "route_5", Enabled: true, RuleGroup: "off", Outbound: "block"},
-		{ID: "route_6", Enabled: true, RuleGroup: "tg", Outbound: "block"},
+		{ID: "route_6", Enabled: true, RuleGroup: "tg_block", Outbound: "block"},
 	}
 	doc, data := renderDoc(t, cfg)
 	rules := doc.Route.Rules
@@ -445,17 +448,19 @@ func TestRouteLabelsAlignWithRules(t *testing.T) {
 	isolate(t)
 	cfg := baseConfig()
 	cfg.RuleGroups["ru"] = managerconfig.RuleGroup{ID: "ru", Enabled: true, Rules: []string{"domain_suffix:ru"}}
+	cfg.RuleGroups["su"] = managerconfig.RuleGroup{ID: "su", Enabled: true, Rules: []string{"domain_suffix:su"}}
+	cfg.RuleGroups["rf"] = managerconfig.RuleGroup{ID: "rf", Enabled: true, Rules: []string{"domain_suffix:xn--p1ai"}}
 	cfg.Routes = []managerconfig.Route{
 		{ID: "route_1", Enabled: true, RuleGroup: "ru", Outbound: "direct"},
-		{ID: "route_2", Enabled: false, RuleGroup: "ru", Outbound: "block"},
-		{ID: "route_3", Enabled: true, RuleGroup: "ru", Outbound: "block"},
+		{ID: "route_2", Enabled: false, RuleGroup: "su", Outbound: "block"},
+		{ID: "route_3", Enabled: true, RuleGroup: "rf", Outbound: "block"},
 	}
 	doc, _ := renderDoc(t, cfg)
 	labels := RouteLabels(cfg)
 	if len(labels) != len(doc.Route.Rules) {
 		t.Fatalf("%d labels for %d rules", len(labels), len(doc.Route.Rules))
 	}
-	if labels[0].Kind != "sniff" || labels[1].ID != "route_1" || labels[2].ID != "route_3" || labels[2].Group != "ru" {
+	if labels[0].Kind != "sniff" || labels[1].ID != "route_1" || labels[2].ID != "route_3" || labels[2].Group != "rf" {
 		t.Fatalf("labels = %#v", labels)
 	}
 }

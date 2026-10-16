@@ -50,6 +50,22 @@ function routeRow(data, route, onChange) {
 	return row;
 }
 
+// syncRuleGroups lets each rule group be routed once: in every row's select,
+// groups already taken by another row are disabled. Returns the first group
+// no row uses yet (undefined when all are routed).
+function syncRuleGroups(list, groups) {
+	var selects = Array.prototype.slice.call(list.querySelectorAll('select[name="rule_group"]'));
+	var used = selects.map(function(s) { return s.value; });
+	selects.forEach(function(select, i) {
+		Array.prototype.forEach.call(select.options, function(opt) {
+			var taken = opt.value !== select.value && used.indexOf(opt.value) >= 0;
+			opt.disabled = taken;
+			opt.textContent = (groups.filter(function(g) { return g.id === opt.value; })[0] || {}).name + (taken ? ' — ' + _('already routed') : '');
+		});
+	});
+	return groups.map(function(g) { return g.id; }).filter(function(id) { return used.indexOf(id) < 0; })[0];
+}
+
 function readRoutes(list) {
 	return Array.prototype.map.call(list.querySelectorAll('[data-sortable-item]'), function(row) {
 		return {
@@ -77,18 +93,28 @@ return view.extend({
 		var dirty = E('span', { 'class': 'sbm-dirty', 'role': 'status' }, [ _('Unsaved changes') ]);
 		var empty = E('div', { 'class': 'sbm-empty' }, [ _('No routes — everything goes to the default below. Add a route to send a rule group somewhere else.') ]);
 		var list = E('ol', { 'class': 'sbm-list' });
+		var groups = (data.rule_groups || []).map(function(g) { return { id: g.id, name: g.name || g.id }; });
+		var addButton;
+		var sync = function() {
+			var free = syncRuleGroups(list, groups);
+			if (addButton) {
+				addButton.disabled = !free;
+				addButton.title = !groups.length ? _('Create a rule group first') : (free ? '' : _('Every rule group is already routed'));
+			}
+			return free;
+		};
 		var changed = function() {
 			dirty.classList.add('on');
 			empty.style.display = list.querySelector('[data-sortable-item]') ? 'none' : '';
+			sync();
 		};
 		(data.routes || []).forEach(function(route) { list.appendChild(routeRow(data, route, changed)); });
 		empty.style.display = (data.routes || []).length ? 'none' : '';
 		theme.sortable(list, changed);
 
 		var finalSelect = targetSelect('final', data.targets, data.final || 'direct', changed);
-		var noGroups = !(data.rule_groups || []).length;
 
-		return E('div', { 'class': 'singbox-manager-page' }, [
+		var page = E('div', { 'class': 'singbox-manager-page' }, [
 			E('div', { 'class': 'singbox-manager-section' }, [
 				E('div', { 'class': 'singbox-manager-section-header' }, [
 					E('h3', {}, _('Routing')),
@@ -107,12 +133,13 @@ return view.extend({
 				list,
 				empty,
 				E('div', { 'class': 'sbm-add' }, [
-					E('button', {
+					addButton = E('button', {
 						'class': 'btn cbi-button cbi-button-add',
-						'disabled': noGroups ? 'disabled' : null,
-						'title': noGroups ? _('Create a rule group first') : '',
 						'click': function() {
-							list.appendChild(routeRow(data, { enabled: true, rule_group: (data.rule_groups[0] || {}).id, outbound: data.final || 'direct' }, changed));
+							var free = sync();
+							if (!free)
+								return;
+							list.appendChild(routeRow(data, { enabled: true, rule_group: free, outbound: data.final || 'direct' }, changed));
 							changed();
 						}
 					}, _('Add route'))
@@ -139,5 +166,7 @@ return view.extend({
 				])
 			])
 		]);
+		sync();
+		return page;
 	}
 });
