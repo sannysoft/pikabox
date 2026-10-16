@@ -8,6 +8,7 @@
 // and re-renders (poll / refreshView) never duplicate it.
 var CSS = [
 	/* ---- page + section cards ---- */
+	'.pikabox-page,.pikabox-dashboard{margin-bottom:32px}',
 	'.pikabox-page{display:grid;gap:16px}',
 	'.pikabox-page.narrow{max-width:960px}',
 	'.pikabox-dashboard{display:grid;gap:16px}',
