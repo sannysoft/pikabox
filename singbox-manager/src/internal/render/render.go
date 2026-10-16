@@ -2,18 +2,17 @@ package render
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net"
 	"net/url"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 
 	managerconfig "github.com/openwrt-singbox/singbox-manager/internal/config"
+	"github.com/openwrt-singbox/singbox-manager/internal/subscription"
 )
-
-var errUnsupportedTransport = errors.New("unsupported transport")
 
 type singBoxConfig struct {
 	Log          logConfig           `json:"log"`
@@ -29,6 +28,7 @@ type singBoxConfig struct {
 // daemon does not depend on reaching the network at every startup.
 type experimentalConfig struct {
 	CacheFile cacheFileConfig `json:"cache_file"`
+	ClashAPI  *clashAPIConfig `json:"clash_api,omitempty"`
 }
 
 type cacheFileConfig struct {
@@ -51,6 +51,10 @@ type dnsConfig struct {
 	Final   string           `json:"final,omitempty"`
 }
 
+type clashAPIConfig struct {
+	ExternalController string `json:"external_controller"`
+}
+
 type routeConfig struct {
 	Rules                 []map[string]any `json:"rules,omitempty"`
 	RuleSet               []map[string]any `json:"rule_set,omitempty"`
@@ -59,28 +63,170 @@ type routeConfig struct {
 	DefaultDomainResolver string           `json:"default_domain_resolver,omitempty"`
 }
 
+// Plan is the resolved outbound graph for one config: which targets render,
+// and the members of every group (needed by the fallback controller).
+type Plan struct {
+	Outbounds []map[string]any
+	// Rendered holds every tag present in Outbounds (plus direct/block).
+	Rendered map[string]bool
+	// Fallback maps each fallback-mode group tag to its ordered members.
+	Fallback map[string][]string
+	Warnings []string
+}
+
+const testInterval = "3m"
+
+// BuildPlan renders outbounds, subscriptions (as urltest over their selected
+// candidates), and outbound groups. Anything that cannot render — a broken
+// source, a subscription with nothing selected, a group left without members —
+// is dropped with a warning instead of failing the whole config, and
+// references to it resolve away (see Resolve).
+func BuildPlan(cfg managerconfig.Config) Plan {
+	plan := Plan{
+		Outbounds: []map[string]any{{"type": "direct", "tag": "direct"}, {"type": "block", "tag": "block"}},
+		Rendered:  map[string]bool{"direct": true, "block": true},
+		Fallback:  map[string][]string{},
+	}
+	warn := func(format string, args ...any) { plan.Warnings = append(plan.Warnings, fmt.Sprintf(format, args...)) }
+	testURL := firstNonEmptyString(cfg.Manager.TestURL, "https://www.gstatic.com/generate_204")
+
+	for _, id := range sortedKeys(cfg.Outbounds) {
+		outbound := cfg.Outbounds[id]
+		if !outbound.Enabled {
+			continue
+		}
+		item, err := subscription.ParseSource(outbound.Source)
+		if err != nil {
+			warn("outbound %s skipped: %v", id, err)
+			continue
+		}
+		item.Outbound["tag"] = id
+		plan.Outbounds = append(plan.Outbounds, item.Outbound)
+		plan.Rendered[id] = true
+	}
+
+	for _, id := range sortedKeys(cfg.Subscriptions) {
+		sub := cfg.Subscriptions[id]
+		if !sub.Enabled {
+			continue
+		}
+		selected := managerconfig.LoadSubscriptionState(id).SelectedOutbounds()
+		if len(selected) == 0 {
+			warn("subscription %s has no alive outbounds selected yet", id)
+			continue
+		}
+		tags := make([]string, 0, len(selected))
+		for _, outbound := range selected {
+			tag := stringValue(outbound["tag"])
+			plan.Outbounds = append(plan.Outbounds, outbound)
+			plan.Rendered[tag] = true
+			tags = append(tags, tag)
+		}
+		plan.Outbounds = append(plan.Outbounds, urltest(id, tags, testURL))
+		plan.Rendered[id] = true
+	}
+
+	// A fallback group starts on its first member not known to be down, so a
+	// (re)start does not sit on a dead member until the controller's next pass.
+	probes := managerconfig.LoadProbeResults()
+	firstAlive := func(members []string) string {
+		for _, member := range members {
+			if result, probed := probes[member]; !probed || result.Health == "ok" {
+				return member
+			}
+		}
+		return members[0]
+	}
+
+	// Groups may nest, so render them depth-first: a member group must be known
+	// to render before the group that contains it is built.
+	state := map[string]int{}
+	var visit func(id string)
+	visit = func(id string) {
+		if state[id] != 0 {
+			return
+		}
+		state[id] = 1
+		group := cfg.OutboundGroups[id]
+		var members []string
+		for _, member := range group.Members {
+			if _, isGroup := cfg.OutboundGroups[member]; isGroup {
+				visit(member)
+			}
+			if plan.Rendered[member] {
+				members = append(members, member)
+			}
+		}
+		state[id] = 2
+		if !group.Enabled {
+			return
+		}
+		if len(members) == 0 {
+			warn("outbound group %s has no available members", id)
+			return
+		}
+		if group.Mode == "fallback" {
+			plan.Outbounds = append(plan.Outbounds, map[string]any{
+				"type":                        "selector",
+				"tag":                         id,
+				"outbounds":                   members,
+				"default":                     firstAlive(members),
+				"interrupt_exist_connections": true,
+			})
+			plan.Fallback[id] = members
+		} else {
+			plan.Outbounds = append(plan.Outbounds, urltest(id, members, testURL))
+		}
+		plan.Rendered[id] = true
+	}
+	for _, id := range sortedKeys(cfg.OutboundGroups) {
+		visit(id)
+	}
+	return plan
+}
+
+func urltest(tag string, members []string, testURL string) map[string]any {
+	return map[string]any{
+		"type":                        "urltest",
+		"tag":                         tag,
+		"outbounds":                   members,
+		"url":                         testURL,
+		"interval":                    testInterval,
+		"tolerance":                   50,
+		"interrupt_exist_connections": true,
+	}
+}
+
+// Final is the route.final tag: the configured final target when it renders,
+// otherwise direct (fail open, so a broken proxy setup never cuts the LAN off).
+func (plan Plan) Final(cfg managerconfig.Config) string {
+	if cfg.Manager.RuntimeMode == "direct" {
+		return "direct"
+	}
+	if plan.Rendered[cfg.Manager.Final] {
+		return cfg.Manager.Final
+	}
+	return "direct"
+}
+
 func Render(cfg managerconfig.Config) ([]byte, error) {
-	outbounds, proxyTag, err := renderOutbounds(cfg)
-	if err != nil {
-		return nil, err
-	}
-	resolvers := resolversForActiveGroup(cfg)
-	applyOutboundDomainResolvers(outbounds, resolvers)
+	plan := BuildPlan(cfg)
+	final := plan.Final(cfg)
+	resolvers := domainResolvers{bootstrap: bootstrapResolverTag(enabledDNSServers(cfg))}
+	applyOutboundDomainResolvers(plan.Outbounds, resolvers)
 
+	experimental := &experimentalConfig{CacheFile: cacheFileConfig{Enabled: true, Path: CacheFilePath}}
+	if cfg.Manager.APIListen != "" {
+		experimental.ClashAPI = &clashAPIConfig{ExternalController: cfg.Manager.APIListen}
+	}
 	document := singBoxConfig{
-		Log: logConfig{
-			Level:     cfg.Manager.LogLevel,
-			Timestamp: true,
-		},
-		DNS:       renderDNS(cfg),
-		Inbounds:  renderInbounds(cfg),
-		Outbounds: outbounds,
-		Route:     renderRoute(cfg, proxyTag, resolvers),
-		Experimental: &experimentalConfig{
-			CacheFile: cacheFileConfig{Enabled: true, Path: CacheFilePath},
-		},
+		Log:          logConfig{Level: cfg.Manager.LogLevel, Timestamp: true},
+		DNS:          renderDNS(cfg, plan, final),
+		Inbounds:     renderInbounds(cfg),
+		Outbounds:    plan.Outbounds,
+		Route:        renderRoute(cfg, plan, final, resolvers),
+		Experimental: experimental,
 	}
-
 	data, err := json.MarshalIndent(document, "", "  ")
 	if err != nil {
 		return nil, err
@@ -89,26 +235,20 @@ func Render(cfg managerconfig.Config) ([]byte, error) {
 }
 
 func renderInbounds(cfg managerconfig.Config) []map[string]any {
-	inbounds := []map[string]any{
-		{
-			"type":        "mixed",
-			"tag":         "mixed-in",
-			"listen":      cfg.Manager.MixedListen,
-			"listen_port": cfg.Manager.MixedPort,
-			"sniff":       true,
-		},
-	}
-
+	inbounds := []map[string]any{{
+		"type":        "mixed",
+		"tag":         "mixed-in",
+		"listen":      cfg.Manager.MixedListen,
+		"listen_port": cfg.Manager.MixedPort,
+	}}
 	if cfg.UsesTProxy() {
 		inbounds = append(inbounds, map[string]any{
 			"type":        "tproxy",
 			"tag":         "tproxy-in",
 			"listen":      "::",
 			"listen_port": cfg.Manager.TProxyPort,
-			"sniff":       true,
 		})
 	}
-
 	// DNS aimed at the router is nat-redirected here (tproxy can't capture it
 	// while dnsmasq owns the local socket); the hijack-dns route rule answers it.
 	if dnsHijackEnabled(cfg) {
@@ -119,7 +259,6 @@ func renderInbounds(cfg managerconfig.Config) []map[string]any {
 			"listen_port": cfg.Manager.DNSPort,
 		})
 	}
-
 	if cfg.TUN.Enabled {
 		addresses := []string{}
 		if cfg.TUN.Inet4Address != "" {
@@ -134,185 +273,238 @@ func renderInbounds(cfg managerconfig.Config) []map[string]any {
 			"interface_name": "singbox0",
 			"auto_route":     cfg.TUN.AutoRoute,
 			"auto_redirect":  cfg.TUN.AutoRedirect,
-			"sniff":          true,
 			"address":        addresses,
 		})
 	}
-
 	return inbounds
 }
 
-func renderOutbounds(cfg managerconfig.Config) ([]map[string]any, string, error) {
-	outbounds := []map[string]any{
-		{"type": "direct", "tag": "direct"},
-		{"type": "block", "tag": "block"},
-	}
-
-	group := cfg.ActiveGroup()
-	if group == nil || !group.Enabled {
-		outbounds = append(outbounds, fallbackSelector())
-		return outbounds, "proxy", nil
-	}
-
-	switch group.Strategy {
-	case "selector":
-		strategyOutbounds, err := renderStrategyNodes(cfg, *group)
-		if err != nil {
-			return nil, "", err
+// matchRule builds the match part of a route/DNS rule from rule groups: every
+// rule type becomes one sub-rule and the sub-rules are ORed (a logical rule),
+// because sing-box ANDs different fields inside a single default rule. Remote
+// URLs become one rule_set sub-rule. It returns nil when nothing can match.
+func matchRule(cfg managerconfig.Config, groupIDs []string, sets map[string]managerconfig.RuleSet) map[string]any {
+	values := map[string][]string{}
+	var types []string
+	var ruleSets []string
+	private := ""
+	for _, groupID := range groupIDs {
+		group, ok := cfg.RuleGroups[groupID]
+		if !ok || !group.Enabled {
+			continue
 		}
-		outbounds = append(outbounds, strategyOutbounds.nodes...)
-		outbounds = append(outbounds, renderSelector(strategyOutbounds.tags, selectedTag(cfg, *group, strategyOutbounds.tags)))
-	case "urltest", "load-balance":
-		strategyOutbounds, err := renderStrategyNodes(cfg, *group)
-		if err != nil {
-			return nil, "", err
-		}
-		outbounds = append(outbounds, strategyOutbounds.nodes...)
-		outbounds = append(outbounds, renderURLTest(strategyOutbounds.tags))
-	default:
-		node := cfg.ActiveNode()
-		if node == nil || !node.Enabled {
-			outbounds = append(outbounds, fallbackSelector())
-			return outbounds, "proxy", nil
-		}
-		nodeOutbound, err := renderNodeOutbound(*node)
-		if err != nil {
-			// A selected node whose transport sing-box cannot render (e.g.
-			// xhttp/splithttp) must not abort the whole render: that would block
-			// every reload, including independent firewall/transparent changes.
-			// Fall back to a direct selector, mirroring renderStrategyNodes which
-			// already skips unsupported nodes.
-			if errors.Is(err, errUnsupportedTransport) {
-				outbounds = append(outbounds, fallbackSelector())
-				return outbounds, "proxy", nil
-			}
-			return nil, "", err
-		}
-		nodeTag := stringValue(nodeOutbound["tag"])
-		outbounds = append(outbounds, nodeOutbound)
-		outbounds = append(outbounds, renderSelector([]string{nodeTag}, nodeTag))
-	}
-	return outbounds, "proxy", nil
-}
-
-type strategyOutbounds struct {
-	nodes []map[string]any
-	tags  []string
-}
-
-func renderStrategyNodes(cfg managerconfig.Config, group managerconfig.Group) (strategyOutbounds, error) {
-	candidates := groupNodes(cfg, group)
-	if len(candidates) == 0 {
-		return strategyOutbounds{}, nil
-	}
-
-	seen := map[string]bool{
-		"direct": true,
-		"block":  true,
-		"proxy":  true,
-	}
-	result := strategyOutbounds{}
-	for _, node := range candidates {
-		outbound, err := renderNodeOutbound(node)
-		if err != nil {
-			if errors.Is(err, errUnsupportedTransport) {
+		for _, rule := range group.Rules {
+			typ, value, err := managerconfig.ParseRule(rule)
+			if err != nil {
 				continue
 			}
-			return strategyOutbounds{}, err
-		}
-		tag := stringValue(outbound["tag"])
-		if tag == "" {
-			return strategyOutbounds{}, fmt.Errorf("node %q rendered without an outbound tag", node.ID)
-		}
-		if seen[tag] {
-			return strategyOutbounds{}, fmt.Errorf("node %q uses duplicate outbound tag %q", node.ID, tag)
-		}
-		seen[tag] = true
-		result.nodes = append(result.nodes, outbound)
-		result.tags = append(result.tags, tag)
-	}
-	return result, nil
-}
-
-func groupNodes(cfg managerconfig.Config, group managerconfig.Group) []managerconfig.Node {
-	subscriptions := map[string]bool{}
-	for _, id := range group.Subscriptions {
-		subscriptions[id] = true
-	}
-
-	nodes := make([]managerconfig.Node, 0, len(cfg.Nodes))
-	for _, node := range cfg.Nodes {
-		if !node.Enabled {
-			continue
-		}
-		if node.Subscription != "" && len(subscriptions) > 0 && !subscriptions[node.Subscription] {
-			continue
-		}
-		nodes = append(nodes, node)
-	}
-	sortNodes(nodes)
-	return nodes
-}
-
-func sortNodes(nodes []managerconfig.Node) {
-	for i := 1; i < len(nodes); i++ {
-		for j := i; j > 0 && nodes[j-1].ID > nodes[j].ID; j-- {
-			nodes[j-1], nodes[j] = nodes[j], nodes[j-1]
-		}
-	}
-}
-
-func selectedTag(cfg managerconfig.Config, group managerconfig.Group, tags []string) string {
-	if group.SelectedNode != "" {
-		if node, ok := cfg.Nodes[group.SelectedNode]; ok {
-			tag := node.Tag
-			if tag == "" {
-				tag = node.ID
+			switch typ {
+			case "remote":
+				set := managerconfig.RemoteRuleSet(value)
+				// Only cached sets are referenced: sing-box fails to start
+				// when it cannot fetch a remote set, so the daemon downloads
+				// it (direct, else through the tunnel) and reloads.
+				if !fileExists(set.Path) {
+					continue
+				}
+				if _, dup := sets[set.ID]; !dup {
+					sets[set.ID] = set
+				}
+				ruleSets = appendUnique(ruleSets, set.ID)
+			case "ip_is_private":
+				private = value
+			default:
+				if _, seen := values[typ]; !seen {
+					types = append(types, typ)
+				}
+				values[typ] = appendUnique(values[typ], value)
 			}
-			for _, candidate := range tags {
-				if candidate == tag {
-					return tag
+		}
+	}
+	var rules []map[string]any
+	for _, typ := range types {
+		rules = append(rules, map[string]any{typ: ruleValues(typ, values[typ])})
+	}
+	if len(ruleSets) > 0 {
+		rules = append(rules, map[string]any{"rule_set": ruleSets})
+	}
+	if private != "" {
+		rules = append(rules, map[string]any{"ip_is_private": private == "true"})
+	}
+	switch len(rules) {
+	case 0:
+		return nil
+	case 1:
+		return rules[0]
+	}
+	anyRules := make([]any, len(rules))
+	for i, rule := range rules {
+		anyRules[i] = rule
+	}
+	return map[string]any{"type": "logical", "mode": "or", "rules": anyRules}
+}
+
+// ruleValues converts rule values to the JSON type sing-box expects.
+func ruleValues(typ string, values []string) any {
+	switch typ {
+	case "port", "source_port":
+		ports := make([]int, 0, len(values))
+		for _, value := range values {
+			port, _ := strconv.Atoi(value)
+			ports = append(ports, port)
+		}
+		return ports
+	case "ip_cidr", "source_ip_cidr":
+		return normalizeSourceCIDRs(values)
+	}
+	return values
+}
+
+func appendUnique(values []string, value string) []string {
+	for _, existing := range values {
+		if existing == value {
+			return values
+		}
+	}
+	return append(values, value)
+}
+
+func withAction(match map[string]any, outbound string) map[string]any {
+	rule := map[string]any{}
+	for k, v := range match {
+		rule[k] = v
+	}
+	rule["outbound"] = outbound
+	return rule
+}
+
+func renderRoute(cfg managerconfig.Config, plan Plan, final string, resolvers domainResolvers) routeConfig {
+	route := routeConfig{
+		Final:                 final,
+		AutoDetectInterface:   true,
+		DefaultDomainResolver: resolvers.bootstrap,
+		// sing-box 1.13 dropped inbound-level sniffing; it is a route action.
+		Rules: []map[string]any{{"action": "sniff"}},
+	}
+	if dnsHijackEnabled(cfg) {
+		route.Rules = append(route.Rules,
+			map[string]any{"inbound": []string{dnsInboundTag}, "action": "hijack-dns"},
+			map[string]any{"protocol": "dns", "action": "hijack-dns"},
+		)
+	}
+
+	sets := map[string]managerconfig.RuleSet{}
+	if cfg.Manager.RuntimeMode == "rule" {
+		for _, device := range cfg.Transparent.Devices {
+			if !device.Enabled || device.Group == "" || !plan.Rendered[device.Group] {
+				continue
+			}
+			var sources []string
+			for _, ip := range []string{device.IPv4, device.IPv6} {
+				if ip != "" {
+					sources = append(sources, ip)
 				}
 			}
+			if len(sources) > 0 {
+				route.Rules = append(route.Rules, map[string]any{"source_ip_cidr": normalizeSourceCIDRs(sources), "outbound": device.Group})
+			}
+		}
+		for _, entry := range cfg.Routes {
+			if !entry.Enabled || !plan.Rendered[entry.Outbound] {
+				continue
+			}
+			if match := matchRule(cfg, []string{entry.RuleGroup}, sets); match != nil {
+				route.Rules = append(route.Rules, withAction(match, entry.Outbound))
+			}
 		}
 	}
-	if len(tags) > 0 {
-		return tags[0]
+	// DNS rules render in every mode, so their rule-sets must be defined too.
+	for _, rule := range cfg.EnabledDNSRules() {
+		matchRule(cfg, rule.RuleGroups, sets)
 	}
-	return "direct"
+	for _, id := range sortedKeys(sets) {
+		route.RuleSet = append(route.RuleSet, renderRuleSet(sets[id]))
+	}
+	return route
 }
 
-func fallbackSelector() map[string]any {
-	return renderSelector(nil, "direct")
+func renderRuleSet(set managerconfig.RuleSet) map[string]any {
+	return map[string]any{"type": "local", "tag": set.ID, "format": set.Format, "path": set.Path}
 }
 
-func renderSelector(tags []string, selected string) map[string]any {
-	outboundTags := append([]string{}, tags...)
-	outboundTags = append(outboundTags, "direct")
-	if selected == "" {
-		selected = outboundTags[0]
+func renderDNS(cfg managerconfig.Config, plan Plan, final string) *dnsConfig {
+	servers := enabledDNSServers(cfg)
+	if len(servers) == 0 {
+		return nil
 	}
-	return map[string]any{
-		"type":      "selector",
-		"tag":       "proxy",
-		"outbounds": outboundTags,
-		"default":   selected,
+	dns := &dnsConfig{}
+	for _, server := range servers {
+		entry := renderDNSServer(server)
+		detour := server.Detour
+		if detour == "proxy" {
+			detour = final
+		}
+		// A detour to the plain direct outbound is the default (and deprecated
+		// as explicit config); a detour to a target that did not render falls
+		// back to direct as well.
+		if detour == "" || detour == "direct" || !plan.Rendered[detour] {
+			delete(entry, "detour")
+		} else {
+			entry["detour"] = detour
+		}
+		dns.Servers = append(dns.Servers, entry)
 	}
+	// Guarantee a proxy-free resolver for bootstrapping outbound server
+	// hostnames. Without one, resolving a proxy node's own server would route
+	// through that very node — a loop sing-box cannot break.
+	if !hasDirectResolver(servers) {
+		dns.Servers = append(dns.Servers, map[string]any{"type": "local", "tag": syntheticBootstrapTag})
+	}
+
+	sets := map[string]managerconfig.RuleSet{}
+	for _, rule := range cfg.EnabledDNSRules() {
+		if server, ok := cfg.DNSServers[rule.Server]; !ok || !server.Enabled {
+			continue
+		}
+		var parts []map[string]any
+		if sources := normalizeSourceCIDRs(rule.Sources); len(sources) > 0 {
+			parts = append(parts, map[string]any{"source_ip_cidr": sources})
+		}
+		if match := matchRule(cfg, rule.RuleGroups, sets); match != nil {
+			parts = append(parts, match)
+		}
+		var entry map[string]any
+		switch len(parts) {
+		case 0:
+			continue
+		case 1:
+			entry = withAction(parts[0], "")
+		default:
+			entry = map[string]any{"type": "logical", "mode": "and", "rules": []any{parts[0], parts[1]}}
+		}
+		delete(entry, "outbound")
+		entry["server"] = rule.Server
+		dns.Rules = append(dns.Rules, entry)
+	}
+
+	dns.Final = servers[0].ID
+	if server, ok := cfg.DNSServers[cfg.Manager.DNSFinal]; ok && server.Enabled {
+		dns.Final = server.ID
+	}
+	return dns
 }
 
-func renderURLTest(tags []string) map[string]any {
-	if len(tags) == 0 {
-		return fallbackSelector()
-	}
-	return map[string]any{
-		"type":      "urltest",
-		"tag":       "proxy",
-		"outbounds": tags,
-		"url":       "https://www.gstatic.com/generate_204",
-		"interval":  "3m",
-		"tolerance": 50,
-	}
+type domainResolvers struct {
+	// bootstrap is the DNS server used to resolve outbound server hostnames and
+	// to back route.default_domain_resolver. It must never route through the
+	// proxy: resolving a proxy node's own server through that same node is an
+	// unbreakable loop (see bootstrapResolverTag / hasDirectResolver).
+	bootstrap string
 }
+
+// syntheticBootstrapTag is the tag of the local resolver renderDNS injects when
+// the config defines no proxy-free server to bootstrap outbound hostnames.
+const syntheticBootstrapTag = "domain-bootstrap"
 
 // ProbeAPI describes the Clash API controller embedded in a probe config so an
 // external caller can delay-test each outbound through it.
@@ -322,207 +514,30 @@ type ProbeAPI struct {
 }
 
 // BuildProbeConfig renders a minimal sing-box config whose sole purpose is
-// delay-testing the given nodes through their real outbounds via the Clash API.
-// Unlike the main runtime config it carries no inbounds, DNS, or routing: the
-// Clash API's /proxies/{tag}/delay endpoint dials straight through the outbound,
-// which is exactly the end-to-end path (TLS/transport/auth) a genuine test must
-// exercise.
-//
-// It returns the config JSON and a map from node ID to the outbound tag the
-// Clash API knows the node by. Nodes whose transport sing-box cannot render, or
-// that collide on an outbound tag, are omitted and reported in skipped so the
-// caller can surface an explicit per-node error instead of a silent pass.
-func BuildProbeConfig(nodes []managerconfig.Node, api ProbeAPI) (data []byte, tags map[string]string, skipped map[string]error, err error) {
-	outbounds := []map[string]any{
-		{"type": "direct", "tag": "direct"},
-		{"type": "block", "tag": "block"},
+// delay-testing the given outbounds (keyed by tag) through the Clash API's
+// /proxies/{tag}/delay — the real end-to-end path (TLS/transport/auth).
+func BuildProbeConfig(outbounds map[string]map[string]any, api ProbeAPI) ([]byte, error) {
+	list := []map[string]any{{"type": "direct", "tag": "direct"}}
+	for _, tag := range sortedKeys(outbounds) {
+		outbound := map[string]any{}
+		for k, v := range outbounds[tag] {
+			outbound[k] = v
+		}
+		outbound["tag"] = tag
+		list = append(list, outbound)
 	}
-	tags = map[string]string{}
-	skipped = map[string]error{}
-	seen := map[string]bool{"direct": true, "block": true}
-
-	for _, node := range nodes {
-		if !node.Enabled {
-			continue
-		}
-		outbound, renderErr := renderNodeOutbound(node)
-		if renderErr != nil {
-			skipped[node.ID] = renderErr
-			continue
-		}
-		tag := stringValue(outbound["tag"])
-		if tag == "" || seen[tag] {
-			// Fall back to the node ID (and ultimately skip) so one node never
-			// shadows another's delay result under a shared tag.
-			tag = node.ID
-			outbound["tag"] = tag
-		}
-		if seen[tag] {
-			skipped[node.ID] = fmt.Errorf("node %q collides on outbound tag %q", node.ID, tag)
-			continue
-		}
-		seen[tag] = true
-		tags[node.ID] = tag
-		outbounds = append(outbounds, outbound)
-	}
-
 	document := map[string]any{
 		"log":       map[string]any{"level": "error", "timestamp": true},
-		"outbounds": outbounds,
+		"outbounds": list,
 		"experimental": map[string]any{
-			"clash_api": map[string]any{
-				"external_controller": api.Listen,
-				"secret":              api.Secret,
-			},
+			"clash_api": map[string]any{"external_controller": api.Listen, "secret": api.Secret},
 		},
 	}
-	data, err = json.MarshalIndent(document, "", "  ")
+	data, err := json.MarshalIndent(document, "", "  ")
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, err
 	}
-	return append(data, '\n'), tags, skipped, nil
-}
-
-func renderNodeOutbound(node managerconfig.Node) (map[string]any, error) {
-	tag := node.Tag
-	if tag == "" {
-		tag = node.ID
-	}
-	server := node.Server
-	if server == "" {
-		server = node.Address
-	}
-
-	switch node.Type {
-	case "direct":
-		return map[string]any{"type": "direct", "tag": tag}, nil
-	case "shadowsocks":
-		return map[string]any{
-			"type":        "shadowsocks",
-			"tag":         tag,
-			"server":      server,
-			"server_port": node.Port,
-			"method":      node.Method,
-			"password":    node.Password,
-		}, nil
-	case "trojan":
-		outbound := map[string]any{
-			"type":        "trojan",
-			"tag":         tag,
-			"server":      server,
-			"server_port": node.Port,
-			"password":    node.Password,
-		}
-		addTLS(outbound, node)
-		if err := addTransport(outbound, node); err != nil {
-			return nil, err
-		}
-		return outbound, nil
-	case "vmess":
-		outbound := map[string]any{
-			"type":        "vmess",
-			"tag":         tag,
-			"server":      server,
-			"server_port": node.Port,
-			"uuid":        node.UUID,
-		}
-		// For VMess, "security" is the cipher — not the transport security. Share
-		// links overload the field with "tls"/"reality", which sing-box rejects as
-		// a cipher ("unsupported security type: tls"); those are transport security
-		// and belong to the TLS block that addTLS renders. Only forward a genuine
-		// VMess cipher here and let anything else fall through to addTLS.
-		if cipher := vmessCipher(node.Security); cipher != "" {
-			outbound["security"] = cipher
-		}
-		addTLS(outbound, node)
-		if err := addTransport(outbound, node); err != nil {
-			return nil, err
-		}
-		return outbound, nil
-	case "vless":
-		outbound := map[string]any{
-			"type":        "vless",
-			"tag":         tag,
-			"server":      server,
-			"server_port": node.Port,
-			"uuid":        node.UUID,
-		}
-		if node.Flow != "" {
-			outbound["flow"] = node.Flow
-		}
-		addTLS(outbound, node)
-		if err := addTransport(outbound, node); err != nil {
-			return nil, err
-		}
-		return outbound, nil
-	case "hysteria2":
-		outbound := map[string]any{
-			"type":        "hysteria2",
-			"tag":         tag,
-			"server":      server,
-			"server_port": node.Port,
-			"password":    node.Password,
-		}
-		addTLS(outbound, node)
-		return outbound, nil
-	case "tuic":
-		outbound := map[string]any{
-			"type":        "tuic",
-			"tag":         tag,
-			"server":      server,
-			"server_port": node.Port,
-			"uuid":        node.UUID,
-			"password":    node.Password,
-		}
-		if node.Congestion != "" {
-			outbound["congestion_control"] = node.Congestion
-		}
-		if node.UDPRelayMode != "" {
-			outbound["udp_relay_mode"] = node.UDPRelayMode
-		}
-		addTLS(outbound, node)
-		return outbound, nil
-	default:
-		return nil, fmt.Errorf("node %q type %q is not renderable", node.ID, node.Type)
-	}
-}
-
-func addTLS(outbound map[string]any, node managerconfig.Node) {
-	if !node.TLS && node.Security != "tls" && node.Security != "reality" && node.ALPN == "" && !node.Insecure {
-		return
-	}
-	tls := map[string]any{"enabled": true}
-	if node.SNI != "" {
-		tls["server_name"] = node.SNI
-	}
-	if node.ALPN != "" {
-		tls["alpn"] = splitCSV(node.ALPN)
-	}
-	if node.Insecure {
-		tls["insecure"] = true
-	}
-	if node.Security == "reality" {
-		// Reality replaces the normal certificate handshake: sing-box needs the
-		// server's public key and short ID, and mandates a uTLS fingerprint to
-		// mimic a real client. Reality is incompatible with insecure, so drop it.
-		reality := map[string]any{"enabled": true}
-		if node.RealityPublicKey != "" {
-			reality["public_key"] = node.RealityPublicKey
-		}
-		if node.RealityShortID != "" {
-			reality["short_id"] = node.RealityShortID
-		}
-		tls["reality"] = reality
-		delete(tls, "insecure")
-		tls["utls"] = map[string]any{
-			"enabled":     true,
-			"fingerprint": firstNonEmptyString(node.Fingerprint, "chrome"),
-		}
-	} else if node.Fingerprint != "" {
-		// A uTLS fingerprint can also apply to plain TLS outbounds.
-		tls["utls"] = map[string]any{"enabled": true, "fingerprint": node.Fingerprint}
-	}
-	outbound["tls"] = tls
+	return append(data, '\n'), nil
 }
 
 func firstNonEmptyString(values ...string) string {
@@ -534,120 +549,15 @@ func firstNonEmptyString(values ...string) string {
 	return ""
 }
 
-func addTransport(outbound map[string]any, node managerconfig.Node) error {
-	if node.Transport == "" || node.Transport == "tcp" {
-		return nil
+func sortedKeys[T any](m map[string]T) []string {
+	keys := make([]string, 0, len(m))
+	for key := range m {
+		keys = append(keys, key)
 	}
-	transport := map[string]any{"type": node.Transport}
-	switch node.Transport {
-	case "httpupgrade":
-		if node.Host != "" {
-			transport["host"] = node.Host
-		}
-		if node.Path != "" {
-			transport["path"] = node.Path
-		}
-	case "ws":
-		if node.Path != "" {
-			transport["path"] = node.Path
-		}
-		if node.Host != "" {
-			transport["headers"] = map[string]any{"Host": node.Host}
-		}
-	case "grpc":
-		if node.Path != "" {
-			transport["service_name"] = strings.TrimPrefix(node.Path, "/")
-		}
-	case "http":
-		if node.Host != "" {
-			transport["host"] = []string{node.Host}
-		}
-		if node.Path != "" {
-			transport["path"] = node.Path
-		}
-	default:
-		// sing-box only implements ws, grpc, http, httpupgrade, and quic V2Ray
-		// transports. xhttp/splithttp are Xray-only and have no sing-box
-		// equivalent, so a node using them cannot be rendered.
-		return fmt.Errorf("%w %q for node %q: sing-box supports ws, grpc, http, and httpupgrade; xhttp/splithttp are not supported", errUnsupportedTransport, node.Transport, node.ID)
-	}
-	outbound["transport"] = transport
-	return nil
+	sort.Strings(keys)
+	return keys
 }
 
-// vmessCipher returns value only when it is a VMess cipher sing-box accepts;
-// otherwise "" so the outbound omits it (sing-box defaults to "auto"). This
-// filters out transport-security markers like "tls"/"reality" that subscription
-// links wrongly place in the security field.
-func vmessCipher(value string) string {
-	switch value {
-	case "auto", "none", "zero", "aes-128-gcm", "chacha20-poly1305":
-		return value
-	default:
-		return ""
-	}
-}
-
-func splitCSV(value string) []string {
-	var values []string
-	for _, part := range strings.Split(value, ",") {
-		part = strings.TrimSpace(part)
-		if part != "" {
-			values = append(values, part)
-		}
-	}
-	return values
-}
-
-func renderDNS(cfg managerconfig.Config) *dnsConfig {
-	servers := enabledDNSServers(cfg)
-	if len(servers) == 0 {
-		return nil
-	}
-
-	dns := &dnsConfig{}
-	for _, server := range servers {
-		dns.Servers = append(dns.Servers, renderDNSServer(server))
-	}
-
-	// Guarantee a proxy-free resolver for bootstrapping outbound server
-	// hostnames. Without one, resolving a proxy node's own server would route
-	// through that very node — a loop sing-box cannot break.
-	if !hasDirectResolver(servers) {
-		dns.Servers = append(dns.Servers, map[string]any{
-			"type": "local",
-			"tag":  syntheticBootstrapTag,
-		})
-	}
-
-	if group := cfg.ActiveGroup(); group != nil {
-		for _, rule := range cfg.DNSRulesForGroup(group.ID) {
-			if server, ok := cfg.DNSServers[rule.Server]; !ok || !server.Enabled {
-				continue
-			}
-			sources := normalizeSourceCIDRs(rule.Sources)
-			ruleSets := enabledRuleSetIDs(cfg, rule.RuleSets)
-			if len(sources) == 0 && len(ruleSets) == 0 {
-				continue
-			}
-			entry := map[string]any{}
-			if len(sources) > 0 {
-				entry["source_ip_cidr"] = sources
-			}
-			if len(ruleSets) > 0 {
-				entry["rule_set"] = ruleSets
-			}
-			entry["server"] = rule.Server
-			dns.Rules = append(dns.Rules, entry)
-		}
-	}
-
-	dns.Final = defaultResolver(cfg, servers)
-	return dns
-}
-
-// enabledDNSServers returns every enabled DNS server, ordered by ID so the
-// rendered server list and the default resolver are deterministic.
 func enabledDNSServers(cfg managerconfig.Config) []managerconfig.DNSServer {
 	servers := make([]managerconfig.DNSServer, 0, len(cfg.DNSServers))
 	for _, server := range cfg.DNSServers {
@@ -677,39 +587,6 @@ func hasDirectResolver(servers []managerconfig.DNSServer) bool {
 
 // defaultResolver picks the group's preferred resolver, falling back to the
 // first enabled server.
-func defaultResolver(cfg managerconfig.Config, servers []managerconfig.DNSServer) string {
-	if group := cfg.ActiveGroup(); group != nil && group.DNSFinal != "" {
-		if server, ok := cfg.DNSServers[group.DNSFinal]; ok && server.Enabled {
-			return group.DNSFinal
-		}
-	}
-	if len(servers) > 0 {
-		return servers[0].ID
-	}
-	return ""
-}
-
-type domainResolvers struct {
-	// bootstrap is the DNS server used to resolve outbound server hostnames and
-	// to back route.default_domain_resolver. It must never route through the
-	// proxy: resolving a proxy node's own server through that same node is an
-	// unbreakable loop (see bootstrapResolverTag / hasDirectResolver).
-	bootstrap string
-}
-
-func resolversForActiveGroup(cfg managerconfig.Config) domainResolvers {
-	return domainResolvers{bootstrap: bootstrapResolverTag(enabledDNSServers(cfg))}
-}
-
-// syntheticBootstrapTag is the tag of the local resolver renderDNS injects when
-// the config defines no proxy-free server to bootstrap outbound hostnames.
-const syntheticBootstrapTag = "domain-bootstrap"
-
-// bootstrapResolverTag returns the tag of a proxy-free resolver suitable for
-// bootstrapping outbound server hostnames. It prefers a plain (udp/tcp) direct
-// server for speed and reliability, falls back to any direct server, and finally
-// to syntheticBootstrapTag — matching the local server renderDNS appends when no
-// direct resolver exists.
 func bootstrapResolverTag(servers []managerconfig.DNSServer) string {
 	var fallback string
 	for _, server := range servers {
@@ -732,19 +609,6 @@ func bootstrapResolverTag(servers []managerconfig.DNSServer) string {
 
 // enabledRuleSetIDs filters a list of rule-set references to those that exist
 // and are enabled, preserving order.
-func enabledRuleSetIDs(cfg managerconfig.Config, ids []string) []string {
-	filtered := make([]string, 0, len(ids))
-	for _, id := range ids {
-		if ruleset, ok := cfg.RuleSets[id]; ok && ruleset.Enabled {
-			filtered = append(filtered, id)
-		}
-	}
-	return filtered
-}
-
-// applyOutboundDomainResolvers gives every outbound that dials a server by
-// hostname an explicit proxy-free domain_resolver, so its server address is
-// resolved without looping through the proxy.
 func applyOutboundDomainResolvers(outbounds []map[string]any, resolvers domainResolvers) {
 	if resolvers.bootstrap == "" {
 		return
@@ -759,7 +623,7 @@ func applyOutboundDomainResolvers(outbounds []map[string]any, resolvers domainRe
 
 func supportsDomainResolver(outbound map[string]any) bool {
 	switch stringValue(outbound["type"]) {
-	case "selector", "urltest", "block":
+	case "selector", "urltest", "block", "direct":
 		return false
 	default:
 		return true
@@ -866,86 +730,6 @@ func defaultDNSPort(dnsType string) int {
 	}
 }
 
-func renderRoute(cfg managerconfig.Config, proxyTag string, resolvers domainResolvers) routeConfig {
-	route := routeConfig{
-		Final:                 routeFinal(cfg, proxyTag),
-		AutoDetectInterface:   true,
-		DefaultDomainResolver: resolvers.bootstrap,
-	}
-
-	if dnsHijackEnabled(cfg) {
-		route.Rules = append(route.Rules,
-			map[string]any{"inbound": []string{dnsInboundTag}, "action": "hijack-dns"},
-			map[string]any{"protocol": "dns", "action": "hijack-dns"},
-		)
-	}
-
-	group := cfg.ActiveGroup()
-	if group == nil {
-		return route
-	}
-
-	used := map[string]bool{}
-	if cfg.Manager.RuntimeMode == "rule" {
-		for _, rule := range cfg.RouteRulesForGroup(group.ID) {
-			sources := normalizeSourceCIDRs(rule.Sources)
-			ruleSets := enabledRuleSetIDs(cfg, rule.RuleSets)
-			if len(sources) == 0 && len(ruleSets) == 0 {
-				continue
-			}
-			entry := map[string]any{}
-			if len(sources) > 0 {
-				entry["source_ip_cidr"] = sources
-			}
-			if len(ruleSets) > 0 {
-				entry["rule_set"] = ruleSets
-				for _, id := range ruleSets {
-					used[id] = true
-				}
-			}
-			outbound := rule.Outbound
-			if outbound == "proxy" || outbound == "" {
-				outbound = proxyTag
-			}
-			entry["outbound"] = outbound
-			route.Rules = append(route.Rules, entry)
-		}
-	}
-
-	// DNS rules render regardless of route mode, so their rule sets must be
-	// defined too. Collect every rule set referenced by the active group.
-	for _, rule := range cfg.DNSRulesForGroup(group.ID) {
-		for _, id := range enabledRuleSetIDs(cfg, rule.RuleSets) {
-			used[id] = true
-		}
-	}
-
-	for _, id := range sortedKeys(used) {
-		ruleset, ok := cfg.RuleSets[id]
-		if !ok || !ruleset.Enabled {
-			continue
-		}
-		if entry := renderRuleSet(ruleset, proxyTag); entry != nil {
-			route.RuleSet = append(route.RuleSet, entry)
-		}
-	}
-
-	return route
-}
-
-func sortedKeys(set map[string]bool) []string {
-	keys := make([]string, 0, len(set))
-	for key := range set {
-		keys = append(keys, key)
-	}
-	for i := 1; i < len(keys); i++ {
-		for j := i; j > 0 && keys[j-1] > keys[j]; j-- {
-			keys[j-1], keys[j] = keys[j], keys[j-1]
-		}
-	}
-	return keys
-}
-
 func normalizeSourceCIDRs(sources []string) []string {
 	cidrs := make([]string, 0, len(sources))
 	for _, source := range sources {
@@ -971,71 +755,6 @@ const dnsInboundTag = "dns-in"
 
 func dnsHijackEnabled(cfg managerconfig.Config) bool {
 	return cfg.Transparent.Active() && cfg.Transparent.DNSHijack
-}
-
-func routeFinal(cfg managerconfig.Config, proxyTag string) string {
-	switch cfg.Manager.RuntimeMode {
-	case "direct":
-		return "direct"
-	case "global":
-		return proxyTag
-	}
-
-	group := cfg.ActiveGroup()
-	if group == nil || group.RouteFinal == "" || group.RouteFinal == "proxy" {
-		return proxyTag
-	}
-	return group.RouteFinal
-}
-
-func renderRuleSet(ruleset managerconfig.RuleSet, downloadDetour string) map[string]any {
-	format := "binary"
-	if ruleset.Format == "source" {
-		format = "source"
-	}
-
-	if ruleset.Path != "" && fileExists(ruleset.Path) {
-		return map[string]any{
-			"type":   "local",
-			"tag":    ruleset.ID,
-			"format": format,
-			"path":   ruleset.Path,
-		}
-	}
-
-	if ruleset.Type == "remote" && ruleset.URL != "" {
-		// Fetch remote rule-sets through the proxy. Their hosts (e.g.
-		// raw.githubusercontent.com) are frequently censored on the same
-		// networks where this manager runs, so a "direct" download reliably
-		// fails and takes sing-box startup down with it. Combined with the
-		// cache_file, the first successful fetch is reused on later boots.
-		if downloadDetour == "" {
-			downloadDetour = "proxy"
-		}
-		entry := map[string]any{
-			"type":            "remote",
-			"tag":             ruleset.ID,
-			"format":          format,
-			"url":             ruleset.URL,
-			"download_detour": downloadDetour,
-		}
-		if ruleset.UpdateInterval != "" {
-			entry["update_interval"] = ruleset.UpdateInterval
-		}
-		return entry
-	}
-	if ruleset.Type == "remote" {
-		return nil
-	}
-	if ruleset.Path != "" {
-		return map[string]any{
-			"type":   "local",
-			"tag":    ruleset.ID,
-			"format": format,
-			"path":   ruleset.Path,
-		}
-	}
-	return nil
 }
 
 func fileExists(path string) bool {

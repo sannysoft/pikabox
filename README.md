@@ -13,16 +13,54 @@ transparent (TProxy) gateway with per-device overrides — without hand-editing
 
 ## Features
 
-- **Subscriptions & node groups** — import nodes from subscription URLs, organize them
-  into groups, auto-select by `urltest`, and run ping / latency / health checks.
-- **DNS** — manage DNS servers (UDP / DoH / …) with per-server detours and DNS rules.
-- **Routing** — route rules backed by remote rule-sets (GeoIP / Geosite, e.g. Iran/CN),
-  with a configurable final outbound.
-- **Transparent proxy** — nftables TProxy gateway for the LAN, optional DNS hijack,
-  kill switch, and per-device (`proxy_device`) mode overrides (including TCP-only with
-  direct UDP for consoles).
-- **TUN mode** — optional `tun` inbound with `auto_route` / `auto_redirect`.
-- **OpenWrt-native** — UCI config, a procd service, an `rpcd`/`ubus` API, and a LuCI app.
+- **Outbounds** — each one is a share URI (vless/vmess/trojan/ss/hysteria2/tuic) or raw
+  sing-box outbound JSON (any type/option, passed through as-is), with real
+  through-the-tunnel latency.
+- **Subscriptions** — URL + an [expr](https://expr-lang.org) filter over each outbound
+  (`type == "vless" && name matches "(?i)nl|de" && port == 443`, or anything in the full
+  JSON via `outbound.tls?.reality?.enabled`) + a count: the N fastest alive survivors are
+  used. Shows fetched / filtered / alive counts and best latency; re-tested every probe
+  interval, re-fetched on its own interval.
+- **Outbound groups** — named, ordered member lists (outbounds, subscriptions, other
+  groups, direct/block). Mode *fastest* (sing-box `urltest`) or *fallback* (first alive in
+  written order — a selector driven by the daemon through the Clash API every 30 s).
+- **Rule groups** — named sets of `type:value` rules, ORed: any sing-box match field
+  (`domain`, `domain_suffix`, `domain_keyword`, `domain_regex`, `ip_cidr`, `port`,
+  `protocol`, `process_name`, …) or `remote:<rule-set URL>` (downloaded through the tunnel
+  and cached; uncached sets are left out so sing-box never fails to start on them).
+- **Routing** — ordered `rule group → target` list plus a default target; first match wins.
+- **DNS**, **transparent proxy (TProxy)**, **TUN**, per-device pins — as before; DNS rules
+  match rule groups, DNS detours can point at any outbound group.
+
+Targets OpenWrt 25.12+ with the feed's sing-box (1.13.x; renders no legacy fields —
+sniffing is a route action).
+
+### Config model (`/etc/config/singbox-manager`)
+
+```
+config outbound 'vp1'
+	option source 'vless://…#vp1'
+config subscription 'prov1'
+	option url 'https://…'
+	option filter 'name matches "^NL"'
+	option count '3'
+config outbound_group 'us_out'
+	option name 'us-out'
+	option mode 'fallback'
+	list member 'vp1'
+	list member 'prov1'
+config rule_group 'tg'
+	list rule 'domain_suffix:telegram.org'
+	list rule 'remote:https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-telegram.srs'
+config route 'route_1'
+	option rule_group 'tg'
+	option outbound 'us_out'
+config manager 'main'
+	option final 'us_out'
+```
+
+Subscription candidates and their top-N selection live in
+`/etc/singbox-manager/state/`; latency results in `/var/run/singbox-manager/probe.json`.
 
 ## Screenshots
 

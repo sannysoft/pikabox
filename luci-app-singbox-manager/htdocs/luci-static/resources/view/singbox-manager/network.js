@@ -259,7 +259,7 @@ function deviceRow(view, device) {
 		E('input', { 'class': 'cbi-input-text dev-ipv4', 'value': device.ipv4 || '', 'placeholder': '192.168.1.50', 'change': ui.createHandlerFn(view, apply) }),
 		E('input', { 'class': 'cbi-input-text dev-ipv6', 'value': device.ipv6 || '', 'placeholder': _('IPv6 (optional)'), 'change': ui.createHandlerFn(view, apply) }),
 		modeSelect,
-		E('input', { 'class': 'cbi-input-text dev-group', 'value': device.group || '', 'placeholder': _('Group (optional)'), 'change': ui.createHandlerFn(view, apply) }),
+		E('input', { 'class': 'cbi-input-text dev-group', 'value': device.group || '', 'placeholder': _('Pin to outbound (ID, optional)'), 'change': ui.createHandlerFn(view, apply) }),
 		E('label', { 'class': 'singbox-manager-toggle', 'title': _('Send this device\'s UDP directly (TCP still proxied)') }, [
 			E('input', { 'type': 'checkbox', 'class': 'dev-udp', 'checked': device.bypass_udp ? 'checked' : null, 'change': ui.createHandlerFn(view, apply) }),
 			E('span', {})

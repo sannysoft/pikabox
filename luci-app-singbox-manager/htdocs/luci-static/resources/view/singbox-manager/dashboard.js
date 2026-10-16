@@ -13,7 +13,7 @@ var callStatus = rpc.declare({
 
 var callHealthCheck = rpc.declare({
 	object: 'singbox.manager',
-	method: 'health_check',
+	method: 'probe',
 	expect: { '': {} }
 });
 
@@ -241,9 +241,9 @@ function renderHero(view, data) {
 			])
 		]),
 		E('div', { 'class': 'singbox-manager-hero-facts' }, [
-			E('div', {}, [ E('span', {}, _('Group')), E('strong', {}, theme.text(data.active_group)) ]),
+			E('div', {}, [ E('span', {}, _('Final')), E('strong', {}, theme.text(data.final)) ]),
 			E('div', {}, [ E('span', {}, _('Mode')), modeSelect ]),
-			E('div', {}, [ E('span', {}, _('Outbound')), E('strong', {}, theme.text(data.selected_outbound)) ]),
+			E('div', {}, [ E('span', {}, _('Exit')), E('strong', { 'title': (data.chain || []).concat([ data.selected_outbound || '' ]).join(' → ') }, theme.text(data.selected_name || data.selected_outbound)) ]),
 			E('div', {}, [ E('span', {}, _('Health')), E('strong', { 'class': healthClass(data.health) }, [ health ]) ])
 		]),
 		E('div', { 'class': 'singbox-manager-hero-action' }, primary)
@@ -296,7 +296,7 @@ function renderToolbar(view, data) {
 		E('button', {
 			'class': 'btn cbi-button',
 			'click': ui.createHandlerFn(view, function() {
-				return runAction(view, callHealthCheck, _('Health check complete'), _('Health check failed'));
+				return runAction(view, callHealthCheck, _('All outbounds and subscriptions re-tested'), _('Health check failed'));
 			})
 		}, _('Check Health'))
 	]);
@@ -328,13 +328,16 @@ function renderLive(view, data) {
 	return E('div', { 'class': 'singbox-manager-live' }, [
 		renderStaleAlert(view, data),
 		renderHero(view, data),
+		(data.warnings && data.warnings.length)
+			? E('div', { 'class': 'singbox-manager-warning' }, data.warnings.map(function(w) { return E('div', {}, theme.text(w)); }))
+			: '',
 		renderThroughput(data, hist),
 		E('div', { 'class': 'singbox-manager-metrics' }, [
 			metric(_('Daemon'), data.daemon ? _('Online') : _('Offline'), data.daemon ? 'ok' : 'error'),
 			metric(_('Connections'), String(data.connections || 0)),
 			metric(_('Memory'), formatBytes((data.memory_kb || 0) * 1024)),
-			metric(_('CPU'), data.cpu_percent ? data.cpu_percent + ' %' : '-'),
-			metric(_('Strategy'), data.strategy)
+			metric(_('Final mode'), data.strategy || '-'),
+			metric(_('Route chain'), (data.chain_names || data.chain || []).concat(data.selected_name || data.selected_outbound ? [ data.selected_name || data.selected_outbound ] : []).join(' → ') || '-')
 		]),
 		renderToolbar(view, data)
 	]);

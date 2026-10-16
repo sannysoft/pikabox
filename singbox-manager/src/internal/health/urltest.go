@@ -19,7 +19,6 @@ import (
 	"syscall"
 	"time"
 
-	managerconfig "github.com/openwrt-singbox/singbox-manager/internal/config"
 	"github.com/openwrt-singbox/singbox-manager/internal/render"
 )
 
@@ -50,20 +49,17 @@ type ProbeOptions struct {
 //
 // Unlike the old TCP probe it never reports a dead node as healthy: a node is
 // "ok" only when a request genuinely completed through it.
-func ProbeNodes(ctx context.Context, opts ProbeOptions, nodes []managerconfig.Node) map[string]EndpointResult {
+// ProbeOutbounds delay-tests every outbound (keyed by tag) through its real
+// path and returns a result per tag. It stands up one throwaway sing-box
+// instance holding all outbounds plus the Clash API, then hits
+// /proxies/{tag}/delay concurrently — handshake + transport + auth + an actual
+// HTTP GET through the tunnel, never a bare TCP connect. An outbound is "ok"
+// only when a request genuinely completed through it.
+func ProbeOutbounds(ctx context.Context, opts ProbeOptions, outbounds map[string]map[string]any) map[string]EndpointResult {
 	results := map[string]EndpointResult{}
-	testable := make([]managerconfig.Node, 0, len(nodes))
-	for _, node := range nodes {
-		if !node.Enabled {
-			results[node.ID] = EndpointResult{ID: node.ID, Health: "disabled"}
-			continue
-		}
-		testable = append(testable, node)
-	}
-	if len(testable) == 0 {
+	if len(outbounds) == 0 {
 		return results
 	}
-
 	if opts.TestURL == "" {
 		opts.TestURL = DefaultTestURL
 	}
@@ -74,48 +70,47 @@ func ProbeNodes(ctx context.Context, opts ProbeOptions, nodes []managerconfig.No
 		opts.Concurrency = defaultProbeConcurrency
 	}
 	if opts.Binary == "" {
-		return markAll(results, testable, "error", "sing-box binary is not configured")
+		return markAll(results, outbounds, "error", "sing-box binary is not configured")
 	}
 
 	port, err := freeLocalPort()
 	if err != nil {
-		return markAll(results, testable, "error", fmt.Sprintf("allocate probe port: %v", err))
+		return markAll(results, outbounds, "error", fmt.Sprintf("allocate probe port: %v", err))
 	}
 	secret, err := randomSecret()
 	if err != nil {
-		return markAll(results, testable, "error", fmt.Sprintf("generate probe secret: %v", err))
+		return markAll(results, outbounds, "error", fmt.Sprintf("generate probe secret: %v", err))
 	}
 	api := render.ProbeAPI{Listen: fmt.Sprintf("127.0.0.1:%d", port), Secret: secret}
 
 	dir, err := os.MkdirTemp("", "singbox-probe-")
 	if err != nil {
-		return markAll(results, testable, "error", fmt.Sprintf("create probe dir: %v", err))
+		return markAll(results, outbounds, "error", fmt.Sprintf("create probe dir: %v", err))
 	}
 	defer os.RemoveAll(dir)
 
-	// A single invalid outbound makes sing-box refuse to start the whole config,
-	// which would strand every node behind one bad entry. Validate each node on
-	// its own with `sing-box check` first and keep only the ones that pass, so a
-	// malformed node is reported individually instead of poisoning the batch.
-	valid := precheckNodes(ctx, opts, testable, dir, results)
-	if len(valid) == 0 {
-		return results
-	}
-
-	cfgData, tags, skipped, err := render.BuildProbeConfig(valid, api)
-	if err != nil {
-		return markAll(results, valid, "error", fmt.Sprintf("build probe config: %v", err))
-	}
-	for id, skipErr := range skipped {
-		results[id] = EndpointResult{ID: id, Health: "error", Error: skipErr.Error(), Method: "url"}
-	}
-	if len(tags) == 0 {
-		return results
-	}
-
 	cfgPath := filepath.Join(dir, "config.json")
-	if err := os.WriteFile(cfgPath, cfgData, 0600); err != nil {
-		return markTags(results, tags, "error", fmt.Sprintf("write probe config: %v", err))
+	cfgData, err := render.BuildProbeConfig(outbounds, api)
+	if err == nil {
+		err = os.WriteFile(cfgPath, cfgData, 0600)
+	}
+	if err != nil {
+		return markAll(results, outbounds, "error", fmt.Sprintf("build probe config: %v", err))
+	}
+	// One invalid outbound makes sing-box refuse the whole config. Only when the
+	// combined check fails, check each outbound alone and drop the bad ones, so
+	// a malformed entry is reported individually instead of poisoning the batch.
+	if _, err := singBoxCheck(ctx, opts.Binary, cfgPath); err != nil {
+		outbounds = precheck(ctx, opts, outbounds, dir, results)
+		if len(outbounds) == 0 {
+			return results
+		}
+		if cfgData, err = render.BuildProbeConfig(outbounds, api); err == nil {
+			err = os.WriteFile(cfgPath, cfgData, 0600)
+		}
+		if err != nil {
+			return markAll(results, outbounds, "error", fmt.Sprintf("build probe config: %v", err))
+		}
 	}
 
 	runCtx, cancel := context.WithCancel(ctx)
@@ -128,7 +123,7 @@ func ProbeNodes(ctx context.Context, opts ProbeOptions, nodes []managerconfig.No
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Start(); err != nil {
-		return markTags(results, tags, "error", fmt.Sprintf("start probe sing-box: %v", err))
+		return markAll(results, outbounds, "error", fmt.Sprintf("start probe sing-box: %v", err))
 	}
 	defer func() {
 		cancel()
@@ -137,12 +132,11 @@ func ProbeNodes(ctx context.Context, opts ProbeOptions, nodes []managerconfig.No
 
 	client := &http.Client{}
 	if err := waitClashReady(runCtx, client, api, 10*time.Second); err != nil {
-		detail := strings.TrimSpace(stderr.String())
 		msg := fmt.Sprintf("probe instance did not come up: %v", err)
-		if detail != "" {
+		if detail := strings.TrimSpace(stderr.String()); detail != "" {
 			msg = fmt.Sprintf("%s: %s", msg, lastLine(detail))
 		}
-		return markTags(results, tags, "error", msg)
+		return markAll(results, outbounds, "error", msg)
 	}
 
 	var (
@@ -150,87 +144,66 @@ func ProbeNodes(ctx context.Context, opts ProbeOptions, nodes []managerconfig.No
 		wg  sync.WaitGroup
 		sem = make(chan struct{}, opts.Concurrency)
 	)
-	for id, tag := range tags {
+	for tag := range outbounds {
 		wg.Add(1)
-		go func(id, tag string) {
+		go func(tag string) {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-
 			ms, derr := clashDelay(runCtx, client, api, tag, opts.TestURL, opts.Timeout)
 			mu.Lock()
 			if derr != nil {
-				results[id] = EndpointResult{ID: id, Health: "down", Error: derr.Error(), Method: "url"}
+				results[tag] = EndpointResult{ID: tag, Health: "down", Error: derr.Error(), Method: "url"}
 			} else {
-				results[id] = EndpointResult{ID: id, Health: "ok", LatencyMS: ms, Method: "url"}
+				results[tag] = EndpointResult{ID: tag, Health: "ok", LatencyMS: ms, Method: "url"}
 			}
 			mu.Unlock()
-		}(id, tag)
+		}(tag)
 	}
 	wg.Wait()
 	return results
 }
 
-// precheckNodes validates each node's rendered outbound with `sing-box check`,
-// concurrently, and returns those that pass. Nodes that fail to render or fail
-// the check are recorded in results with the reason, so one malformed node never
-// takes down the shared probe instance. The check config carries only that node,
-// so the verdict is attributable to it alone.
-func precheckNodes(ctx context.Context, opts ProbeOptions, nodes []managerconfig.Node, dir string, results map[string]EndpointResult) []managerconfig.Node {
-	type verdict struct {
-		node managerconfig.Node
-		ok   bool
-		err  string
-	}
-	verdicts := make([]verdict, len(nodes))
-	sem := make(chan struct{}, opts.Concurrency)
-	var wg sync.WaitGroup
-
-	for i, node := range nodes {
+// precheck validates each outbound alone with `sing-box check`, concurrently,
+// records failures in results, and returns the outbounds that pass.
+func precheck(ctx context.Context, opts ProbeOptions, outbounds map[string]map[string]any, dir string, results map[string]EndpointResult) map[string]map[string]any {
+	var (
+		mu    sync.Mutex
+		wg    sync.WaitGroup
+		sem   = make(chan struct{}, opts.Concurrency)
+		valid = map[string]map[string]any{}
+		i     int
+	)
+	for tag, outbound := range outbounds {
+		i++
 		wg.Add(1)
-		go func(i int, node managerconfig.Node) {
+		go func(i int, tag string, outbound map[string]any) {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-
-			cfg, _, skipped, err := render.BuildProbeConfig(
-				[]managerconfig.Node{node},
-				render.ProbeAPI{Listen: "127.0.0.1:0"},
-			)
-			if err != nil {
-				verdicts[i] = verdict{node: node, err: fmt.Sprintf("render: %v", err)}
-				return
-			}
-			if skipErr, ok := skipped[node.ID]; ok {
-				verdicts[i] = verdict{node: node, err: skipErr.Error()}
-				return
-			}
+			reason := ""
+			data, err := render.BuildProbeConfig(map[string]map[string]any{tag: outbound}, render.ProbeAPI{Listen: "127.0.0.1:0"})
 			path := filepath.Join(dir, fmt.Sprintf("check-%d.json", i))
-			if err := os.WriteFile(path, cfg, 0600); err != nil {
-				verdicts[i] = verdict{node: node, err: fmt.Sprintf("write check config: %v", err)}
-				return
+			if err == nil {
+				err = os.WriteFile(path, data, 0600)
 			}
-			if out, err := singBoxCheck(ctx, opts.Binary, path); err != nil {
-				detail := lastLine(out)
-				if detail == "" {
-					detail = err.Error()
+			if err != nil {
+				reason = err.Error()
+			} else if out, err := singBoxCheck(ctx, opts.Binary, path); err != nil {
+				if reason = lastLine(out); reason == "" {
+					reason = err.Error()
 				}
-				verdicts[i] = verdict{node: node, err: detail}
-				return
 			}
-			verdicts[i] = verdict{node: node, ok: true}
-		}(i, node)
+			mu.Lock()
+			defer mu.Unlock()
+			if reason != "" {
+				results[tag] = EndpointResult{ID: tag, Health: "error", Error: reason, Method: "url"}
+			} else {
+				valid[tag] = outbound
+			}
+		}(i, tag, outbound)
 	}
 	wg.Wait()
-
-	valid := make([]managerconfig.Node, 0, len(nodes))
-	for _, v := range verdicts {
-		if v.ok {
-			valid = append(valid, v.node)
-			continue
-		}
-		results[v.node.ID] = EndpointResult{ID: v.node.ID, Health: "error", Error: v.err, Method: "url"}
-	}
 	return valid
 }
 
@@ -339,21 +312,13 @@ func randomSecret() (string, error) {
 	return hex.EncodeToString(buf), nil
 }
 
-func markAll(results map[string]EndpointResult, nodes []managerconfig.Node, healthState, errMsg string) map[string]EndpointResult {
-	for _, node := range nodes {
-		results[node.ID] = EndpointResult{ID: node.ID, Health: healthState, Error: errMsg, Method: "url"}
-	}
-	return results
-}
-
-func markTags(results map[string]EndpointResult, tags map[string]string, healthState, errMsg string) map[string]EndpointResult {
-	for id := range tags {
-		results[id] = EndpointResult{ID: id, Health: healthState, Error: errMsg, Method: "url"}
-	}
-	return results
-}
-
 func lastLine(text string) string {
 	lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
 	return strings.TrimSpace(lines[len(lines)-1])
+}
+func markAll(results map[string]EndpointResult, outbounds map[string]map[string]any, healthState, errMsg string) map[string]EndpointResult {
+	for tag := range outbounds {
+		results[tag] = EndpointResult{ID: tag, Health: healthState, Error: errMsg, Method: "url"}
+	}
+	return results
 }

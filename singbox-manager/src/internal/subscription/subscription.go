@@ -11,7 +11,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -21,9 +20,180 @@ import (
 
 const maxSubscriptionSize = 10 << 20
 
-var unsafeIDChars = regexp.MustCompile(`[^a-zA-Z0-9_]+`)
+var ErrUnsupportedTransport = errors.New("unsupported transport")
 
-func Fetch(ctx context.Context, rawURL string) ([]byte, error) {
+// Item is one outbound parsed from a subscription payload or a source string.
+type Item struct {
+	Name     string
+	Outbound map[string]any
+}
+
+// nonProxyTypes are sing-box outbound types that are plumbing, not servers.
+var nonProxyTypes = map[string]bool{
+	"selector": true, "urltest": true, "direct": true, "block": true, "dns": true,
+}
+
+// ParseOutbounds turns a subscription payload into outbounds. A sing-box JSON
+// config (or bare outbounds array) is passed through verbatim, so every
+// protocol and option sing-box knows survives; share-URI lists are converted.
+func ParseOutbounds(data []byte, format string) ([]Item, error) {
+	payload, err := decodePayload(strings.TrimSpace(string(data)), format)
+	if err != nil {
+		return nil, err
+	}
+	if looksLikeJSONConfig(payload) {
+		return parseJSONOutbounds([]byte(strings.TrimSpace(payload)))
+	}
+	var items []Item
+	var parseErrors []string
+	for _, line := range strings.FieldsFunc(payload, func(r rune) bool {
+		return r == '\n' || r == '\r' || r == '\t' || r == ' '
+	}) {
+		item, err := ParseSource(line)
+		if err != nil {
+			parseErrors = append(parseErrors, err.Error())
+			continue
+		}
+		items = append(items, item)
+	}
+	if len(items) == 0 && len(parseErrors) > 0 {
+		return nil, errors.New(strings.Join(parseErrors, "; "))
+	}
+	return items, nil
+}
+
+// ParseSource converts one outbound definition — a share URI or a sing-box
+// outbound JSON object — into a sing-box outbound (tag removed; the caller
+// assigns it).
+func ParseSource(source string) (Item, error) {
+	source = strings.TrimSpace(source)
+	if strings.HasPrefix(source, "{") {
+		var outbound map[string]any
+		if err := json.Unmarshal([]byte(source), &outbound); err != nil {
+			return Item{}, fmt.Errorf("invalid outbound JSON: %w", err)
+		}
+		if stringField(outbound, "type") == "" {
+			return Item{}, fmt.Errorf("outbound JSON needs a type")
+		}
+		return jsonItem(outbound), nil
+	}
+	node, err := ParseURI(source)
+	if err != nil {
+		return Item{}, err
+	}
+	outbound, err := NodeOutbound(node)
+	if err != nil {
+		return Item{}, err
+	}
+	delete(outbound, "tag")
+	return Item{Name: node.Name, Outbound: outbound}, nil
+}
+
+func jsonItem(outbound map[string]any) Item {
+	name := stringField(outbound, "tag")
+	if name == "" {
+		name = stringField(outbound, "server")
+	}
+	// Tags and cross-references belong to the source document, not ours.
+	delete(outbound, "tag")
+	delete(outbound, "detour")
+	delete(outbound, "domain_resolver")
+	return Item{Name: name, Outbound: outbound}
+}
+
+func parseJSONOutbounds(data []byte) ([]Item, error) {
+	var outbounds []any
+	var doc map[string]any
+	if err := json.Unmarshal(data, &doc); err == nil {
+		raw, ok := doc["outbounds"].([]any)
+		if !ok {
+			return nil, fmt.Errorf("sing-box config has no outbounds array")
+		}
+		outbounds = raw
+	} else if err2 := json.Unmarshal(data, &outbounds); err2 != nil {
+		return nil, fmt.Errorf("invalid sing-box JSON config: %w", err)
+	}
+	var items []Item
+	for _, raw := range outbounds {
+		outbound, ok := raw.(map[string]any)
+		if !ok || nonProxyTypes[stringField(outbound, "type")] || stringField(outbound, "server") == "" {
+			continue
+		}
+		items = append(items, jsonItem(outbound))
+	}
+	if len(items) == 0 {
+		return nil, fmt.Errorf("no proxy outbounds found in sing-box config")
+	}
+	return items, nil
+}
+
+// Candidates gives each outbound a stable tag "<subscription>.<hash of its
+// definition>", so probe history and selection survive refetches that reorder
+// the list. Exact duplicates collapse into one.
+func Candidates(subscriptionID string, items []Item) []managerconfig.Candidate {
+	seen := map[string]bool{}
+	var candidates []managerconfig.Candidate
+	for _, item := range items {
+		definition, _ := json.Marshal(item.Outbound)
+		sum := sha1.Sum(definition)
+		id := subscriptionID + "." + hex.EncodeToString(sum[:])[:10]
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		outbound := map[string]any{}
+		for k, v := range item.Outbound {
+			outbound[k] = v
+		}
+		outbound["tag"] = id
+		candidates = append(candidates, managerconfig.Candidate{ID: id, Name: item.Name, Outbound: outbound})
+	}
+	return candidates
+}
+
+// Match returns the IDs of the candidates that pass a filter expression.
+func Match(filter string, candidates []managerconfig.Candidate) ([]string, error) {
+	keep, err := managerconfig.Filter(filter)
+	if err != nil {
+		return nil, err
+	}
+	ids := []string{}
+	for _, candidate := range candidates {
+		if keep(managerconfig.FilterEnv{
+			Name:     candidate.Name,
+			Type:     stringField(candidate.Outbound, "type"),
+			Server:   stringField(candidate.Outbound, "server"),
+			Port:     intField(candidate.Outbound, "server_port"),
+			Outbound: candidate.Outbound,
+		}) {
+			ids = append(ids, candidate.ID)
+		}
+	}
+	return ids, nil
+}
+
+// Due reports whether a subscription should be refetched.
+func Due(source managerconfig.Subscription, now time.Time) bool {
+	if !source.Enabled || source.URL == "" {
+		return false
+	}
+	updated, err := time.Parse(time.RFC3339, source.LastUpdate)
+	if err != nil {
+		return true
+	}
+	interval, err := time.ParseDuration(source.UpdateInterval)
+	if err != nil || interval <= 0 {
+		interval = 24 * time.Hour
+	}
+	if interval < time.Minute {
+		interval = time.Minute
+	}
+	return !updated.Add(interval).After(now)
+}
+
+// Fetch downloads a subscription, through proxyAddr (an HTTP proxy such as the
+// local mixed inbound) when it is set.
+func Fetch(ctx context.Context, rawURL string, proxyAddr string) ([]byte, error) {
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
 		return nil, err
@@ -33,6 +203,9 @@ func Fetch(ctx context.Context, rawURL string) ([]byte, error) {
 	}
 
 	client := &http.Client{Timeout: 30 * time.Second}
+	if proxyAddr != "" {
+		client.Transport = &http.Transport{Proxy: http.ProxyURL(&url.URL{Scheme: "http", Host: proxyAddr})}
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return nil, err
@@ -58,84 +231,6 @@ func Fetch(ctx context.Context, rawURL string) ([]byte, error) {
 	return body, nil
 }
 
-func Parse(data []byte, format string) ([]managerconfig.Node, error) {
-	payload, err := decodePayload(strings.TrimSpace(string(data)), format)
-	if err != nil {
-		return nil, err
-	}
-
-	// Many providers serve a full sing-box JSON config (or a bare outbounds
-	// array) instead of a list of share URIs. Detect and parse that here so we
-	// don't treat each JSON token as an unsupported URI.
-	if looksLikeJSONConfig(payload) {
-		return parseSingBoxConfig([]byte(strings.TrimSpace(payload)))
-	}
-
-	var nodes []managerconfig.Node
-	var parseErrors []string
-	for _, line := range strings.FieldsFunc(payload, func(r rune) bool {
-		return r == '\n' || r == '\r' || r == '\t' || r == ' '
-	}) {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		node, err := ParseURI(line)
-		if err != nil {
-			parseErrors = append(parseErrors, err.Error())
-			continue
-		}
-		nodes = append(nodes, node)
-	}
-	if len(nodes) == 0 && len(parseErrors) > 0 {
-		return nil, errors.New(strings.Join(parseErrors, "; "))
-	}
-	return nodes, nil
-}
-
-func AssignSource(nodes []managerconfig.Node, subscriptionID string) []managerconfig.Node {
-	assigned := make([]managerconfig.Node, 0, len(nodes))
-	seen := map[string]int{}
-	for _, node := range nodes {
-		node.Subscription = subscriptionID
-		node.Enabled = true
-		node.ID = stableNodeID(subscriptionID, node)
-		if seen[node.ID] > 0 {
-			seen[node.ID]++
-			node.ID = fmt.Sprintf("%s_%d", node.ID, seen[node.ID])
-		} else {
-			seen[node.ID] = 1
-		}
-		node.Tag = node.ID
-		if node.Name == "" {
-			node.Name = node.ID
-		}
-		assigned = append(assigned, node)
-	}
-	return assigned
-}
-
-func Due(source managerconfig.Subscription, now time.Time) bool {
-	if !source.Enabled || source.URL == "" {
-		return false
-	}
-	if source.LastUpdate == "" {
-		return true
-	}
-	updated, err := time.Parse(time.RFC3339, source.LastUpdate)
-	if err != nil {
-		return true
-	}
-	interval, err := time.ParseDuration(source.UpdateInterval)
-	if err != nil || interval <= 0 {
-		interval = 24 * time.Hour
-	}
-	if interval < time.Minute {
-		interval = time.Minute
-	}
-	return !updated.Add(interval).After(now)
-}
-
 func ParseURI(raw string) (managerconfig.Node, error) {
 	switch {
 	case strings.HasPrefix(raw, "vmess://"):
@@ -157,193 +252,8 @@ func ParseURI(raw string) (managerconfig.Node, error) {
 	}
 }
 
-// supportedOutboundTypes lists the sing-box outbound types that map to a proxy
-// node. Group/built-in outbounds (selector, urltest, direct, block, dns) are
-// skipped during import.
-var supportedOutboundTypes = map[string]bool{
-	"shadowsocks": true,
-	"vmess":       true,
-	"vless":       true,
-	"trojan":      true,
-	"hysteria2":   true,
-	"tuic":        true,
-}
-
 // parseSingBoxConfig extracts proxy nodes from a full sing-box JSON config or a
 // bare array of outbound objects.
-func parseSingBoxConfig(data []byte) ([]managerconfig.Node, error) {
-	var outbounds []any
-
-	var doc map[string]any
-	if err := json.Unmarshal(data, &doc); err == nil {
-		raw, ok := doc["outbounds"].([]any)
-		if !ok {
-			return nil, fmt.Errorf("sing-box config has no outbounds array")
-		}
-		outbounds = raw
-	} else {
-		if err2 := json.Unmarshal(data, &outbounds); err2 != nil {
-			return nil, fmt.Errorf("invalid sing-box JSON config: %w", err)
-		}
-	}
-
-	var nodes []managerconfig.Node
-	for _, item := range outbounds {
-		outbound, ok := item.(map[string]any)
-		if !ok {
-			continue
-		}
-		node, ok := outboundToNode(outbound)
-		if !ok {
-			continue
-		}
-		nodes = append(nodes, node)
-	}
-	if len(nodes) == 0 {
-		return nil, fmt.Errorf("no proxy nodes found in sing-box config")
-	}
-	return nodes, nil
-}
-
-func outboundToNode(outbound map[string]any) (managerconfig.Node, bool) {
-	typ := stringField(outbound, "type")
-	if !supportedOutboundTypes[typ] {
-		return managerconfig.Node{}, false
-	}
-	server := stringField(outbound, "server")
-	if server == "" {
-		return managerconfig.Node{}, false
-	}
-	node := managerconfig.Node{
-		Enabled:      true,
-		Type:         typ,
-		Name:         stringField(outbound, "tag"),
-		Server:       server,
-		Port:         intField(outbound, "server_port"),
-		UUID:         stringField(outbound, "uuid"),
-		Password:     stringField(outbound, "password"),
-		Method:       stringField(outbound, "method"),
-		Security:     stringField(outbound, "security"),
-		Flow:         stringField(outbound, "flow"),
-		Congestion:   stringField(outbound, "congestion_control"),
-		UDPRelayMode: stringField(outbound, "udp_relay_mode"),
-	}
-	applyJSONTLS(&node, outbound["tls"])
-	applyJSONTransport(&node, outbound["transport"])
-	if node.Name == "" {
-		node.Name = node.Server
-	}
-	return node, true
-}
-
-func applyJSONTLS(node *managerconfig.Node, raw any) {
-	tls, ok := raw.(map[string]any)
-	if !ok {
-		return
-	}
-	if enabled, ok := tls["enabled"].(bool); ok && enabled {
-		node.TLS = true
-		if node.Security == "" {
-			node.Security = "tls"
-		}
-	}
-	if reality, ok := tls["reality"].(map[string]any); ok {
-		node.Security = "reality"
-		node.TLS = true
-		if pk := stringField(reality, "public_key"); pk != "" {
-			node.RealityPublicKey = pk
-		}
-		if sid := stringField(reality, "short_id"); sid != "" {
-			node.RealityShortID = sid
-		}
-	}
-	if utls, ok := tls["utls"].(map[string]any); ok {
-		if fp := stringField(utls, "fingerprint"); fp != "" {
-			node.Fingerprint = fp
-		}
-	}
-	if sni := stringField(tls, "server_name"); sni != "" {
-		node.SNI = sni
-	}
-	if alpn := joinStringList(tls["alpn"]); alpn != "" {
-		node.ALPN = alpn
-	}
-	if insecure, ok := tls["insecure"].(bool); ok {
-		node.Insecure = insecure
-	}
-}
-
-func applyJSONTransport(node *managerconfig.Node, raw any) {
-	transport, ok := raw.(map[string]any)
-	if !ok {
-		return
-	}
-	node.Transport = normalizeTransport(stringField(transport, "type"))
-	node.Path = stringField(transport, "path")
-	switch node.Transport {
-	case "ws":
-		node.Host = headerHost(transport["headers"])
-		if node.Host == "" {
-			node.Host = stringField(transport, "host")
-		}
-	case "httpupgrade":
-		node.Host = stringField(transport, "host")
-		if node.Host == "" {
-			node.Host = headerHost(transport["headers"])
-		}
-	case "grpc":
-		if name := stringField(transport, "service_name"); name != "" {
-			node.Path = name
-		}
-	}
-}
-
-// headerHost extracts a Host header value from a transport headers object. The
-// key is matched case-insensitively and the value may be a string or a list of
-// strings (sing-box accepts both forms).
-func headerHost(raw any) string {
-	headers, ok := raw.(map[string]any)
-	if !ok {
-		return ""
-	}
-	for key, value := range headers {
-		if strings.EqualFold(key, "host") {
-			return firstStringValue(value)
-		}
-	}
-	return ""
-}
-
-func firstStringValue(raw any) string {
-	switch value := raw.(type) {
-	case string:
-		return value
-	case []any:
-		for _, item := range value {
-			if text, ok := item.(string); ok && text != "" {
-				return text
-			}
-		}
-	}
-	return ""
-}
-
-func joinStringList(raw any) string {
-	switch value := raw.(type) {
-	case string:
-		return value
-	case []any:
-		var parts []string
-		for _, item := range value {
-			if text, ok := item.(string); ok && text != "" {
-				parts = append(parts, text)
-			}
-		}
-		return strings.Join(parts, ",")
-	}
-	return ""
-}
-
 func decodePayload(payload string, format string) (string, error) {
 	switch format {
 	case "", "auto":
@@ -568,22 +478,6 @@ func parseShadowsocks(raw string) (managerconfig.Node, error) {
 	}, nil
 }
 
-func stableNodeID(subscriptionID string, node managerconfig.Node) string {
-	prefix := sanitizeID(subscriptionID)
-	sum := sha1.Sum([]byte(strings.Join([]string{
-		node.Type, node.Name, node.Server, strconv.Itoa(node.Port), node.UUID, node.Password, node.Method,
-	}, "|")))
-	return fmt.Sprintf("%s_%s", prefix, hex.EncodeToString(sum[:])[:10])
-}
-
-func sanitizeID(value string) string {
-	value = strings.Trim(unsafeIDChars.ReplaceAllString(value, "_"), "_")
-	if value == "" {
-		return "node"
-	}
-	return strings.ToLower(value)
-}
-
 func stringField(payload map[string]any, key string) string {
 	value, ok := payload[key]
 	if !ok || value == nil {
@@ -663,4 +557,219 @@ func isTruthy(value string) bool {
 	default:
 		return false
 	}
+}
+func NodeOutbound(node managerconfig.Node) (map[string]any, error) {
+	tag := node.Tag
+	if tag == "" {
+		tag = node.ID
+	}
+	server := node.Server
+	if server == "" {
+		server = node.Address
+	}
+
+	switch node.Type {
+	case "direct":
+		return map[string]any{"type": "direct", "tag": tag}, nil
+	case "shadowsocks":
+		return map[string]any{
+			"type":        "shadowsocks",
+			"tag":         tag,
+			"server":      server,
+			"server_port": node.Port,
+			"method":      node.Method,
+			"password":    node.Password,
+		}, nil
+	case "trojan":
+		outbound := map[string]any{
+			"type":        "trojan",
+			"tag":         tag,
+			"server":      server,
+			"server_port": node.Port,
+			"password":    node.Password,
+		}
+		addTLS(outbound, node)
+		if err := addTransport(outbound, node); err != nil {
+			return nil, err
+		}
+		return outbound, nil
+	case "vmess":
+		outbound := map[string]any{
+			"type":        "vmess",
+			"tag":         tag,
+			"server":      server,
+			"server_port": node.Port,
+			"uuid":        node.UUID,
+		}
+		// For VMess, "security" is the cipher — not the transport security. Share
+		// links overload the field with "tls"/"reality", which sing-box rejects as
+		// a cipher ("unsupported security type: tls"); those are transport security
+		// and belong to the TLS block that addTLS renders. Only forward a genuine
+		// VMess cipher here and let anything else fall through to addTLS.
+		if cipher := vmessCipher(node.Security); cipher != "" {
+			outbound["security"] = cipher
+		}
+		addTLS(outbound, node)
+		if err := addTransport(outbound, node); err != nil {
+			return nil, err
+		}
+		return outbound, nil
+	case "vless":
+		outbound := map[string]any{
+			"type":        "vless",
+			"tag":         tag,
+			"server":      server,
+			"server_port": node.Port,
+			"uuid":        node.UUID,
+		}
+		if node.Flow != "" {
+			outbound["flow"] = node.Flow
+		}
+		addTLS(outbound, node)
+		if err := addTransport(outbound, node); err != nil {
+			return nil, err
+		}
+		return outbound, nil
+	case "hysteria2":
+		outbound := map[string]any{
+			"type":        "hysteria2",
+			"tag":         tag,
+			"server":      server,
+			"server_port": node.Port,
+			"password":    node.Password,
+		}
+		addTLS(outbound, node)
+		return outbound, nil
+	case "tuic":
+		outbound := map[string]any{
+			"type":        "tuic",
+			"tag":         tag,
+			"server":      server,
+			"server_port": node.Port,
+			"uuid":        node.UUID,
+			"password":    node.Password,
+		}
+		if node.Congestion != "" {
+			outbound["congestion_control"] = node.Congestion
+		}
+		if node.UDPRelayMode != "" {
+			outbound["udp_relay_mode"] = node.UDPRelayMode
+		}
+		addTLS(outbound, node)
+		return outbound, nil
+	default:
+		return nil, fmt.Errorf("node %q type %q is not renderable", node.ID, node.Type)
+	}
+}
+
+func addTLS(outbound map[string]any, node managerconfig.Node) {
+	if !node.TLS && node.Security != "tls" && node.Security != "reality" && node.ALPN == "" && !node.Insecure {
+		return
+	}
+	tls := map[string]any{"enabled": true}
+	if node.SNI != "" {
+		tls["server_name"] = node.SNI
+	}
+	if node.ALPN != "" {
+		tls["alpn"] = splitCSV(node.ALPN)
+	}
+	if node.Insecure {
+		tls["insecure"] = true
+	}
+	if node.Security == "reality" {
+		// Reality replaces the normal certificate handshake: sing-box needs the
+		// server's public key and short ID, and mandates a uTLS fingerprint to
+		// mimic a real client. Reality is incompatible with insecure, so drop it.
+		reality := map[string]any{"enabled": true}
+		if node.RealityPublicKey != "" {
+			reality["public_key"] = node.RealityPublicKey
+		}
+		if node.RealityShortID != "" {
+			reality["short_id"] = node.RealityShortID
+		}
+		tls["reality"] = reality
+		delete(tls, "insecure")
+		tls["utls"] = map[string]any{
+			"enabled":     true,
+			"fingerprint": firstNonEmptyString(node.Fingerprint, "chrome"),
+		}
+	} else if node.Fingerprint != "" {
+		// A uTLS fingerprint can also apply to plain TLS outbounds.
+		tls["utls"] = map[string]any{"enabled": true, "fingerprint": node.Fingerprint}
+	}
+	outbound["tls"] = tls
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func addTransport(outbound map[string]any, node managerconfig.Node) error {
+	if node.Transport == "" || node.Transport == "tcp" {
+		return nil
+	}
+	transport := map[string]any{"type": node.Transport}
+	switch node.Transport {
+	case "httpupgrade":
+		if node.Host != "" {
+			transport["host"] = node.Host
+		}
+		if node.Path != "" {
+			transport["path"] = node.Path
+		}
+	case "ws":
+		if node.Path != "" {
+			transport["path"] = node.Path
+		}
+		if node.Host != "" {
+			transport["headers"] = map[string]any{"Host": node.Host}
+		}
+	case "grpc":
+		if node.Path != "" {
+			transport["service_name"] = strings.TrimPrefix(node.Path, "/")
+		}
+	case "http":
+		if node.Host != "" {
+			transport["host"] = []string{node.Host}
+		}
+		if node.Path != "" {
+			transport["path"] = node.Path
+		}
+	default:
+		// sing-box only implements ws, grpc, http, httpupgrade, and quic V2Ray
+		// transports. xhttp/splithttp are Xray-only and have no sing-box
+		// equivalent, so a node using them cannot be rendered.
+		return fmt.Errorf("%w %q for node %q: sing-box supports ws, grpc, http, and httpupgrade; xhttp/splithttp are not supported", ErrUnsupportedTransport, node.Transport, node.ID)
+	}
+	outbound["transport"] = transport
+	return nil
+}
+
+// vmessCipher returns value only when it is a VMess cipher sing-box accepts;
+// otherwise "" so the outbound omits it (sing-box defaults to "auto"). This
+// filters out transport-security markers like "tls"/"reality" that subscription
+// links wrongly place in the security field.
+func vmessCipher(value string) string {
+	switch value {
+	case "auto", "none", "zero", "aes-128-gcm", "chacha20-poly1305":
+		return value
+	default:
+		return ""
+	}
+}
+
+func splitCSV(value string) []string {
+	var values []string
+	for _, part := range strings.Split(value, ",") {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			values = append(values, part)
+		}
+	}
+	return values
 }

@@ -29,12 +29,10 @@ func TestDownloadWritesRuleset(t *testing.T) {
 
 	path := filepath.Join(t.TempDir(), "geoip-test.srs")
 	result, err := Download(context.Background(), managerconfig.RuleSet{
-		ID:      "geoip-test",
-		Enabled: true,
-		Type:    "remote",
-		Format:  "srs",
-		URL:     "https://example.com/geoip-test.srs",
-		Path:    path,
+		ID:     "geoip-test",
+		Format: "binary",
+		URL:    "https://example.com/geoip-test.srs",
+		Path:   path,
 	}, "")
 	if err != nil {
 		t.Fatalf("download ruleset: %v", err)
@@ -57,21 +55,23 @@ func (fn roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return fn(req)
 }
 
-func TestDueUsesLastUpdateAndInterval(t *testing.T) {
-	now := time.Date(2026, 6, 2, 12, 0, 0, 0, time.UTC)
-	entry := managerconfig.RuleSet{
-		ID:             "geoip-test",
-		Enabled:        true,
-		Type:           "remote",
-		URL:            "https://example.com/geoip-test.srs",
-		UpdateInterval: "24h",
-		LastUpdate:     now.Add(-25 * time.Hour).Format(time.RFC3339),
+func TestDueUsesCachedFileAge(t *testing.T) {
+	now := time.Now()
+	entry := managerconfig.RuleSet{ID: "geoip-test", URL: "https://example.com/geoip-test.srs", Path: filepath.Join(t.TempDir(), "x.srs")}
+	if !Due(entry, now) {
+		t.Fatal("missing cache file must be due")
+	}
+	if err := os.WriteFile(entry.Path, []byte("x"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if Due(entry, now) {
+		t.Fatal("fresh cache file must not be due")
+	}
+	old := now.Add(-169 * time.Hour)
+	if err := os.Chtimes(entry.Path, old, old); err != nil {
+		t.Fatal(err)
 	}
 	if !Due(entry, now) {
-		t.Fatal("expected ruleset to be due")
-	}
-	entry.LastUpdate = now.Add(-23 * time.Hour).Format(time.RFC3339)
-	if Due(entry, now) {
-		t.Fatal("expected ruleset to not be due")
+		t.Fatal("week-old cache file must be due")
 	}
 }

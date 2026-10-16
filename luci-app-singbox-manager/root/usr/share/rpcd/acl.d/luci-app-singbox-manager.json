@@ -3,15 +3,67 @@
 		"description": "Grant access to SingBox Manager",
 		"read": {
 			"ubus": {
-				"singbox.manager": [ "status", "runtime_stats", "logs", "devices", "subscriptions", "nodes", "latency_test", "dns", "routing", "transparent", "tun" ]
+				"singbox.manager": [
+					"devices",
+					"dns",
+					"filter_preview",
+					"latency_test",
+					"logs",
+					"outbound_groups",
+					"outbounds",
+					"routing",
+					"rule_groups",
+					"runtime_stats",
+					"status",
+					"subscription_outbounds",
+					"subscriptions",
+					"transparent",
+					"tun"
+				]
 			},
-			"uci": [ "singbox-manager" ]
+			"uci": [
+				"singbox-manager"
+			]
 		},
 		"write": {
 			"ubus": {
-				"singbox.manager": [ "start", "stop", "cleanup", "restart", "reload", "validate", "manager_set_enabled", "manager_set_paused", "manager_set_mode", "group_set", "subscription_set", "subscription_delete", "subscription_import", "refresh_subscription", "refresh_subscriptions", "node_set", "node_delete", "node_select", "node_ping_test", "node_latency_test", "nodes_url_test", "health_check", "dns_server_set", "dns_server_delete", "dns_rule_set", "dns_rule_delete", "dns_test", "route_rule_set", "route_rule_delete", "ruleset_set", "ruleset_delete", "refresh_ruleset", "transparent_set", "tun_set" ]
+				"singbox.manager": [
+					"cleanup",
+					"dns_rule_delete",
+					"dns_rule_set",
+					"dns_server_delete",
+					"dns_server_set",
+					"dns_test",
+					"manager_set_enabled",
+					"manager_set_mode",
+					"manager_set_paused",
+					"outbound_delete",
+					"outbound_group_delete",
+					"outbound_group_set",
+					"outbound_set",
+					"outbound_test",
+					"probe",
+					"reload",
+					"restart",
+					"routing_set",
+					"rule_group_delete",
+					"rule_group_set",
+					"rulesets_refresh",
+					"settings_set",
+					"start",
+					"stop",
+					"subscription_delete",
+					"subscription_refresh",
+					"subscription_set",
+					"subscription_test",
+					"transparent_set",
+					"tun_set",
+					"validate"
+				]
 			},
-			"uci": [ "singbox-manager" ]
+			"uci": [
+				"singbox-manager"
+			]
 		}
 	}
 }

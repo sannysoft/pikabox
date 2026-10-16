@@ -14,10 +14,7 @@ import (
 	managerconfig "github.com/openwrt-singbox/singbox-manager/internal/config"
 )
 
-const (
-	DefaultDirectory = "/etc/singbox-manager/rulesets"
-	maxDownloadSize  = 64 << 20
-)
+const maxDownloadSize = 64 << 20
 
 type Result struct {
 	ID    string `json:"id"`
@@ -31,12 +28,6 @@ type Result struct {
 // censored on the networks this runs on, so downloading through the running
 // tunnel is what makes a manual refresh succeed.
 func Download(ctx context.Context, ruleset managerconfig.RuleSet, proxyAddr string) (Result, error) {
-	if !ruleset.Enabled {
-		return Result{}, fmt.Errorf("ruleset %q is disabled", ruleset.ID)
-	}
-	if ruleset.Type != "remote" {
-		return Result{}, fmt.Errorf("ruleset %q is not remote", ruleset.ID)
-	}
 	if ruleset.URL == "" {
 		return Result{}, fmt.Errorf("ruleset %q url is required", ruleset.ID)
 	}
@@ -114,36 +105,11 @@ func newClient(proxyAddr string) *http.Client {
 }
 
 func Path(ruleset managerconfig.RuleSet) string {
-	if ruleset.Path != "" {
-		return ruleset.Path
-	}
-	name := strings.TrimSpace(ruleset.ID)
-	if name == "" {
-		name = "ruleset"
-	}
-	if filepath.Ext(name) == "" {
-		name += ".srs"
-	}
-	return filepath.Join(DefaultDirectory, filepath.Base(name))
+	return ruleset.Path
 }
 
+// Due reports whether the cached copy is missing or older than a week.
 func Due(ruleset managerconfig.RuleSet, now time.Time) bool {
-	if !ruleset.Enabled || ruleset.Type != "remote" || ruleset.URL == "" {
-		return false
-	}
-	if ruleset.LastUpdate == "" {
-		return true
-	}
-	updated, err := time.Parse(time.RFC3339, ruleset.LastUpdate)
-	if err != nil {
-		return true
-	}
-	interval, err := time.ParseDuration(ruleset.UpdateInterval)
-	if err != nil || interval <= 0 {
-		interval = 168 * time.Hour
-	}
-	if interval < time.Hour {
-		interval = time.Hour
-	}
-	return !updated.Add(interval).After(now)
+	info, err := os.Stat(ruleset.Path)
+	return err != nil || now.Sub(info.ModTime()) >= 168*time.Hour
 }

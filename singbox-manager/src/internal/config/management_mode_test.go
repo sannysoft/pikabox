@@ -28,7 +28,7 @@ func TestManagerActiveHonoursPause(t *testing.T) {
 func TestLoadParsesPausedOption(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "singbox-manager")
-	data := "config manager 'main'\n\toption enabled '1'\n\toption paused '1'\n\toption active_group 'home'\n\nconfig group 'home'\n\toption name 'Home'\n"
+	data := "config manager 'main'\n\toption enabled '1'\n\toption paused '1'\n\n"
 	if err := os.WriteFile(path, []byte(data), 0644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
@@ -50,7 +50,7 @@ func TestLoadParsesPausedOption(t *testing.T) {
 func TestSetManagerPausedRoundTrips(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "singbox-manager")
-	data := "config manager 'main'\n\toption enabled '1'\n\toption active_group 'home'\n\nconfig group 'home'\n\toption name 'Home'\n"
+	data := "config manager 'main'\n\toption enabled '1'\n\n"
 	if err := os.WriteFile(path, []byte(data), 0644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}

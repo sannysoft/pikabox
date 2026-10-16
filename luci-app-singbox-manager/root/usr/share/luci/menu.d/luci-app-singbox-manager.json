@@ -6,8 +6,12 @@
 			"type": "firstchild"
 		},
 		"depends": {
-			"acl": [ "luci-app-singbox-manager" ],
-			"uci": { "singbox-manager": true }
+			"acl": [
+				"luci-app-singbox-manager"
+			],
+			"uci": {
+				"singbox-manager": true
+			}
 		}
 	},
 	"admin/services/singbox-manager/dashboard": {
@@ -18,33 +22,57 @@
 			"path": "singbox-manager/dashboard"
 		}
 	},
-	"admin/services/singbox-manager/nodes": {
-		"title": "Nodes",
+	"admin/services/singbox-manager/outbounds": {
+		"title": "Outbounds",
 		"order": 20,
 		"action": {
 			"type": "view",
-			"path": "singbox-manager/nodes"
+			"path": "singbox-manager/outbounds"
 		}
 	},
-	"admin/services/singbox-manager/dns": {
-		"title": "DNS",
+	"admin/services/singbox-manager/subscriptions": {
+		"title": "Subscriptions",
 		"order": 30,
 		"action": {
 			"type": "view",
-			"path": "singbox-manager/dns"
+			"path": "singbox-manager/subscriptions"
+		}
+	},
+	"admin/services/singbox-manager/groups": {
+		"title": "Outbound Groups",
+		"order": 40,
+		"action": {
+			"type": "view",
+			"path": "singbox-manager/groups"
+		}
+	},
+	"admin/services/singbox-manager/rules": {
+		"title": "Rule Groups",
+		"order": 50,
+		"action": {
+			"type": "view",
+			"path": "singbox-manager/rules"
 		}
 	},
 	"admin/services/singbox-manager/routing": {
 		"title": "Routing",
-		"order": 40,
+		"order": 60,
 		"action": {
 			"type": "view",
 			"path": "singbox-manager/routing"
 		}
 	},
+	"admin/services/singbox-manager/dns": {
+		"title": "DNS",
+		"order": 70,
+		"action": {
+			"type": "view",
+			"path": "singbox-manager/dns"
+		}
+	},
 	"admin/services/singbox-manager/network": {
 		"title": "Network",
-		"order": 50,
+		"order": 80,
 		"action": {
 			"type": "view",
 			"path": "singbox-manager/network"

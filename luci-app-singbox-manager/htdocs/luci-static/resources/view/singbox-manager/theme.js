@@ -150,6 +150,24 @@ var CSS = [
 	'.singbox-manager-metric-value.error{color:#b42318}',
 	'.singbox-manager-logs{display:grid;gap:12px}',
 
+	/* ---- latency / ordered lists ---- */
+	'.singbox-manager-ms{font-variant-numeric:tabular-nums;font-weight:600}',
+	'.singbox-manager-ms.fast{color:#0f7a39}',
+	'.singbox-manager-ms.mid{color:#b45309}',
+	'.singbox-manager-ms.slow,.singbox-manager-ms.down{color:#b42318}',
+	'.singbox-manager-ms.none{color:var(--text-color-medium);font-weight:400}',
+	'.singbox-manager-members{display:flex;gap:6px;flex-wrap:wrap}',
+	'.singbox-manager-member{font-size:12px;padding:2px 8px;border-radius:12px;border:1px solid var(--border-color-medium);white-space:nowrap}',
+	'.singbox-manager-member.now{border-color:#2271b1;background:rgba(34,113,177,.12)}',
+	'.singbox-manager-member.off{opacity:.5;text-decoration:line-through}',
+	'.singbox-manager-order{display:grid;gap:6px}',
+	'.singbox-manager-order-row{display:grid;grid-template-columns:28px minmax(0,1fr) auto;gap:8px;align-items:center}',
+	'.singbox-manager-route-row{display:grid;grid-template-columns:28px 48px minmax(0,1fr) 24px minmax(0,1fr) auto;gap:8px;align-items:center}',
+	'.singbox-manager-route-row select{width:100%;min-width:0;margin:0}',
+	'.singbox-manager-idx{font-size:12px;color:var(--text-color-medium);text-align:right}',
+	'.singbox-manager-mono{font-family:monospace;font-size:12px}',
+	'textarea.singbox-manager-mono{min-height:120px;resize:vertical;width:100%;box-sizing:border-box}',
+
 	/* ---- responsive ---- */
 	'@media(max-width:760px){',
 	'.singbox-manager-grid{grid-template-columns:1fr}',
@@ -202,6 +220,174 @@ return baseclass.extend({
 		ui.addNotification(null, E('p', {}, [ String(message || fallback || _('Request failed')) ]), 'danger');
 	},
 
+
+	// latency renders a probe result as a coloured "123 ms" / "down" badge.
+	latency: function(ms, health, error) {
+		if (health && health !== 'ok')
+			return E('span', { 'class': 'singbox-manager-ms down', 'title': error || '' }, [ health === 'error' ? _('error') : _('down') ]);
+		if (!ms)
+			return E('span', { 'class': 'singbox-manager-ms none' }, [ '-' ]);
+		var cls = ms < 200 ? 'fast' : (ms < 500 ? 'mid' : 'slow');
+		return E('span', { 'class': 'singbox-manager-ms ' + cls }, [ ms + ' ms' ]);
+	},
+
+	field: function(root, name) {
+		return root.querySelector('[name="%s"]'.format(name));
+	},
+
+	value: function(root, name) {
+		var input = this.field(root, name);
+		if (!input)
+			return '';
+		return input.type === 'checkbox' ? input.checked : input.value.trim();
+	},
+
+	// select builds a <select> from [{id, name}] or plain strings.
+	select: function(name, options, current, attrs) {
+		return E('select', Object.assign({ 'class': 'cbi-input-select', 'name': name }, attrs || {}), options.map(function(opt) {
+			var id = typeof opt === 'string' ? opt : opt.id;
+			var label = typeof opt === 'string' ? opt : (opt.label || opt.name || opt.id);
+			return E('option', { 'value': id, 'selected': id === current ? 'selected' : null }, [ label ]);
+		}));
+	},
+
+	checkbox: function(name, checked, label) {
+		return E('label', { 'class': 'singbox-manager-check' }, [
+			E('input', { 'type': 'checkbox', 'name': name, 'checked': checked ? 'checked' : null }),
+			label
+		]);
+	},
+
+	// refresh re-runs a view's load+render and swaps the page in place.
+	refresh: function(view) {
+		return view.load().then(function(data) {
+			var replacement = view.render(data);
+			var root = document.querySelector('.singbox-manager-page');
+			if (root)
+				root.parentNode.replaceChild(replacement, root);
+		});
+	},
+
+	// result reports a backend result; returns true on success.
+	result: function(result, success, failure) {
+		if (result && result.ok) {
+			if (result.pending)
+				this.notify(result.message);
+			else if (success)
+				this.notify(result.warning ? success + ' — ' + result.warning : success);
+			return true;
+		}
+		this.error(result, failure || _('Request failed'));
+		return false;
+	},
+
+	// modal shows a form modal; save(root) returns a promise of a backend
+	// result, and on success the modal closes and the view refreshes.
+	modal: function(view, title, body, save, successText) {
+		var self = this;
+		ui.showModal(title, [
+			E('div', { 'class': 'singbox-manager-modal-form' }, body),
+			E('div', { 'class': 'right' }, [
+				E('button', { 'class': 'btn cbi-button', 'click': ui.hideModal }, _('Cancel')),
+				' ',
+				E('button', {
+					'class': 'btn cbi-button cbi-button-apply',
+					'click': ui.createHandlerFn(view, function() {
+						return save(document.querySelector('.singbox-manager-modal-form')).then(function(result) {
+							if (!self.result(result, successText, _('Save failed')))
+								return;
+							ui.hideModal();
+							return self.refresh(view);
+						});
+					})
+				}, _('Save'))
+			])
+		]);
+	},
+
+	confirmDelete: function(view, title, text, remove) {
+		var self = this;
+		ui.showModal(title, [
+			E('p', {}, [ text ]),
+			E('div', { 'class': 'right' }, [
+				E('button', { 'class': 'btn cbi-button', 'click': ui.hideModal }, _('Cancel')),
+				' ',
+				E('button', {
+					'class': 'btn cbi-button cbi-button-remove',
+					'click': ui.createHandlerFn(view, function() {
+						return remove().then(function(result) {
+							if (!self.result(result, _('Deleted'), _('Delete failed')))
+								return;
+							ui.hideModal();
+							return self.refresh(view);
+						});
+					})
+				}, _('Delete'))
+			])
+		]);
+	},
+
+	// orderedList is an editable, reorderable list of target IDs (used by
+	// group members). options: [{id, name, kind}]. The list lives in the DOM;
+	// read it back with orderedValues(root).
+	orderedList: function(values, options) {
+		var self = this;
+		var box = E('div', { 'class': 'singbox-manager-order', 'data-ordered': '1' });
+		var label = function(id) {
+			var opt = options.filter(function(o) { return o.id === id; })[0];
+			return opt ? '%s (%s)'.format(opt.name || opt.id, opt.kind) : id + ' (missing)';
+		};
+		var renumber = function() {
+			box.querySelectorAll('.singbox-manager-idx').forEach(function(el, i) { el.textContent = (i + 1) + '.'; });
+		};
+		var row = function(id) {
+			var el = E('div', { 'class': 'singbox-manager-order-row', 'data-value': id }, [
+				E('span', { 'class': 'singbox-manager-idx' }),
+				E('span', {}, [ label(id) ]),
+				E('div', { 'class': 'singbox-manager-actions' }, [
+					E('button', { 'type': 'button', 'class': 'btn cbi-button', 'title': _('Move up'), 'click': function() {
+						if (el.previousElementSibling && el.previousElementSibling.dataset.value !== undefined)
+							box.insertBefore(el, el.previousElementSibling);
+						renumber();
+					} }, [ '↑' ]),
+					E('button', { 'type': 'button', 'class': 'btn cbi-button', 'title': _('Move down'), 'click': function() {
+						var next = el.nextElementSibling;
+						if (next && next.dataset.value !== undefined)
+							box.insertBefore(next, el);
+						renumber();
+					} }, [ '↓' ]),
+					E('button', { 'type': 'button', 'class': 'btn cbi-button cbi-button-remove', 'click': function() {
+						el.remove();
+						renumber();
+					} }, [ '×' ])
+				])
+			]);
+			return el;
+		};
+		var picker = self.select('_add', [ { id: '', name: _('— add member —') } ].concat(options.map(function(o) {
+			return { id: o.id, name: '%s (%s)'.format(o.name || o.id, o.kind) };
+		})), '');
+		var adder = E('div', { 'class': 'singbox-manager-order-row' }, [
+			E('span'),
+			picker,
+			E('button', { 'type': 'button', 'class': 'btn cbi-button cbi-button-add', 'click': function() {
+				if (!picker.value)
+					return;
+				box.insertBefore(row(picker.value), adder);
+				picker.value = '';
+				renumber();
+			} }, [ _('Add') ])
+		]);
+		values.forEach(function(id) { box.appendChild(row(id)); });
+		box.appendChild(adder);
+		renumber();
+		return box;
+	},
+
+	orderedValues: function(root) {
+		var box = root.querySelector('[data-ordered]');
+		return box ? Array.prototype.map.call(box.querySelectorAll('[data-value]'), function(el) { return el.dataset.value; }) : [];
+	},
 
 	// inject adds the shared stylesheet to <head> once. Re-renders are common
 	// (polling, refreshView replacing the page subtree); the id guard keeps a

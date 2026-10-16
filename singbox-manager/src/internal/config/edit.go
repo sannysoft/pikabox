@@ -1,218 +1,27 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
-	"time"
+	"sync"
 )
 
-type HealthState struct {
-	Health    string
-	LatencyMS int
-	LastCheck string
-}
+// SectionID turns a display name into a UCI section name.
+func SectionID(name string) string { return sectionNameFromID(name) }
 
-func UpsertSubscription(path string, subscription Subscription, groupID string) error {
-	if subscription.ID == "" {
-		return fmt.Errorf("subscription id is required")
+// upsert replaces the section with the same type and name, or appends it.
+func upsert(path string, replacement section) error {
+	if replacement.name == "" {
+		return fmt.Errorf("%s id is required", replacement.typ)
 	}
-	if subscription.Name == "" {
-		subscription.Name = subscription.ID
-	}
-	if subscription.Format == "" {
-		subscription.Format = "auto"
-	}
-	if subscription.UpdateInterval == "" {
-		subscription.UpdateInterval = "24h"
-	}
-	if subscription.Health == "" {
-		subscription.Health = "unknown"
-	}
-
 	return editConfig(path, func(sections []section) ([]section, error) {
-		replacement := subscriptionSection(subscription)
-		found := false
 		for i, sec := range sections {
-			if sec.typ != "subscription" || sec.name != subscription.ID {
-				continue
-			}
-			if subscription.LastUpdate == "" {
-				replacement.options["last_update"] = sec.options["last_update"]
-			}
-			if subscription.LastCheck == "" {
-				replacement.options["last_check"] = sec.options["last_check"]
-			}
-			if subscription.LastError == "" {
-				replacement.options["last_error"] = sec.options["last_error"]
-			}
-			if subscription.LatencyMS == 0 {
-				if latency := sec.options["latency_ms"]; latency != "" {
-					replacement.options["latency_ms"] = latency
-				}
-			}
-			sections[i] = replacement
-			found = true
-			break
-		}
-		if !found {
-			sections = append(sections, replacement)
-		}
-		if groupID != "" {
-			if err := attachSubscriptionToGroup(sections, groupID, subscription.ID); err != nil {
-				return nil, err
-			}
-		}
-		return sections, nil
-	})
-}
-
-func ReplaceSubscriptionNodes(path string, subscriptionID string, nodes []Node) error {
-	if subscriptionID == "" {
-		return fmt.Errorf("subscription id is required")
-	}
-	return editConfig(path, func(sections []section) ([]section, error) {
-		next := make([]section, 0, len(sections)+len(nodes))
-		for _, sec := range sections {
-			if sec.typ == "node" && sec.options["subscription"] == subscriptionID {
-				continue
-			}
-			if sec.typ == "subscription" && sec.name == subscriptionID {
-				sec.options["last_update"] = time.Now().UTC().Format(time.RFC3339)
-				sec.options["health"] = "ok"
-				delete(sec.options, "last_error")
-			}
-			next = append(next, sec)
-		}
-		for _, node := range nodes {
-			if node.Subscription == "" {
-				node.Subscription = subscriptionID
-			}
-			next = append(next, nodeSection(node))
-		}
-		return next, nil
-	})
-}
-
-func UpdateHealth(path string, nodes map[string]HealthState, groups map[string]HealthState, subscriptions map[string]HealthState) error {
-	checkedAt := time.Now().UTC().Format(time.RFC3339)
-	return editConfig(path, func(sections []section) ([]section, error) {
-		for i := range sections {
-			switch sections[i].typ {
-			case "node":
-				state, ok := nodes[sections[i].name]
-				if !ok {
-					continue
-				}
-				applyHealthOptions(&sections[i], state, checkedAt)
-			case "group":
-				state, ok := groups[sections[i].name]
-				if !ok {
-					continue
-				}
-				applyHealthOptions(&sections[i], state, checkedAt)
-			case "subscription":
-				state, ok := subscriptions[sections[i].name]
-				if !ok {
-					continue
-				}
-				applyHealthOptions(&sections[i], state, checkedAt)
-			}
-		}
-		return sections, nil
-	})
-}
-
-func MarkSubscriptionError(path string, subscriptionID string, message string) error {
-	return editConfig(path, func(sections []section) ([]section, error) {
-		for i := range sections {
-			if sections[i].typ == "subscription" && sections[i].name == subscriptionID {
-				sections[i].options["last_error"] = firstLine(message)
-			}
-		}
-		return sections, nil
-	})
-}
-
-func MarkRuleSetUpdated(path string, rulesetID string) error {
-	return editConfig(path, func(sections []section) ([]section, error) {
-		for i := range sections {
-			if isRuleSetSection(sections[i], rulesetID) {
-				sections[i].options["last_update"] = time.Now().UTC().Format(time.RFC3339)
-				delete(sections[i].options, "last_error")
-			}
-		}
-		return sections, nil
-	})
-}
-
-func MarkRuleSetError(path string, rulesetID string, message string) error {
-	return editConfig(path, func(sections []section) ([]section, error) {
-		for i := range sections {
-			if isRuleSetSection(sections[i], rulesetID) {
-				sections[i].options["last_error"] = firstLine(message)
-			}
-		}
-		return sections, nil
-	})
-}
-
-func isRuleSetSection(sec section, rulesetID string) bool {
-	return sec.typ == "ruleset" && (sec.name == rulesetID || sec.options["id"] == rulesetID)
-}
-
-func DeleteSubscription(path string, subscriptionID string) error {
-	if subscriptionID == "" {
-		return fmt.Errorf("subscription id is required")
-	}
-	return editConfig(path, func(sections []section) ([]section, error) {
-		deletedNodes := map[string]bool{}
-		for _, sec := range sections {
-			if sec.typ == "node" && sec.options["subscription"] == subscriptionID {
-				deletedNodes[sec.name] = true
-			}
-		}
-		next := make([]section, 0, len(sections))
-		found := false
-		for _, sec := range sections {
-			switch {
-			case sec.typ == "subscription" && sec.name == subscriptionID:
-				found = true
-				continue
-			case sec.typ == "node" && sec.options["subscription"] == subscriptionID:
-				continue
-			case sec.typ == "group":
-				removeListValue(&sec, "subscription", subscriptionID)
-				if deletedNodes[sec.options["selected_node"]] {
-					delete(sec.options, "selected_node")
-				}
-			}
-			next = append(next, sec)
-		}
-		if !found {
-			return nil, fmt.Errorf("subscription %q not found", subscriptionID)
-		}
-		return next, nil
-	})
-}
-
-func UpsertManualNode(path string, node Node) error {
-	if node.ID == "" {
-		return fmt.Errorf("node id is required")
-	}
-	if node.Subscription != "" {
-		return fmt.Errorf("manual node cannot include subscription metadata")
-	}
-	return editConfig(path, func(sections []section) ([]section, error) {
-		replacement := nodeSection(node)
-		for i, sec := range sections {
-			if sec.typ == "node" && sec.name == node.ID {
-				if sec.options["subscription"] != "" {
-					return nil, fmt.Errorf("node %q belongs to subscription %q", node.ID, sec.options["subscription"])
-				}
+			if sec.typ == replacement.typ && sec.name == replacement.name {
 				sections[i] = replacement
 				return sections, nil
 			}
@@ -221,31 +30,234 @@ func UpsertManualNode(path string, node Node) error {
 	})
 }
 
-func DeleteManualNode(path string, nodeID string) error {
-	if nodeID == "" {
-		return fmt.Errorf("node id is required")
+func UpsertOutbound(path string, outbound Outbound) error {
+	source := strings.TrimSpace(outbound.Source)
+	if strings.HasPrefix(source, "{") {
+		// UCI values are single-line: store JSON compacted.
+		var object map[string]any
+		if err := json.Unmarshal([]byte(source), &object); err != nil {
+			return fmt.Errorf("outbound %q: invalid JSON: %w", outbound.ID, err)
+		}
+		compact, _ := json.Marshal(object)
+		source = string(compact)
+	}
+	return upsert(path, section{typ: "outbound", name: outbound.ID, options: map[string]string{
+		"enabled": boolString(outbound.Enabled),
+		"name":    valueOrDefault(outbound.Name, outbound.ID),
+		"source":  source,
+	}, lists: map[string][]string{}})
+}
+
+func UpsertSubscription(path string, subscription Subscription) error {
+	options := map[string]string{
+		"enabled":         boolString(subscription.Enabled),
+		"name":            valueOrDefault(subscription.Name, subscription.ID),
+		"url":             subscription.URL,
+		"format":          valueOrDefault(subscription.Format, "auto"),
+		"count":           strconv.Itoa(subscription.Count),
+		"update_interval": valueOrDefault(subscription.UpdateInterval, "24h"),
+	}
+	setOrDelete(options, "filter", strings.TrimSpace(subscription.Filter))
+	setOrDelete(options, "last_update", subscription.LastUpdate)
+	setOrDelete(options, "last_error", subscription.LastError)
+	return upsert(path, section{typ: "subscription", name: subscription.ID, options: options, lists: map[string][]string{}})
+}
+
+// MarkSubscription records the outcome of a fetch: lastUpdate on success,
+// message on failure (an empty message clears a previous error).
+func MarkSubscription(path string, id string, lastUpdate string, message string) error {
+	return editConfig(path, func(sections []section) ([]section, error) {
+		for i := range sections {
+			if sections[i].typ != "subscription" || sections[i].name != id {
+				continue
+			}
+			if lastUpdate != "" {
+				sections[i].options["last_update"] = lastUpdate
+			}
+			if message == "" {
+				delete(sections[i].options, "last_error")
+			} else {
+				sections[i].options["last_error"] = firstLine(message)
+			}
+			return sections, nil
+		}
+		return nil, fmt.Errorf("subscription %q not found", id)
+	})
+}
+
+func UpsertOutboundGroup(path string, group OutboundGroup) error {
+	lists := map[string][]string{}
+	if members := cleanList(group.Members); len(members) > 0 {
+		lists["member"] = members
+	}
+	return upsert(path, section{typ: "outbound_group", name: group.ID, options: map[string]string{
+		"enabled": boolString(group.Enabled),
+		"name":    valueOrDefault(group.Name, group.ID),
+		"mode":    valueOrDefault(group.Mode, "urltest"),
+	}, lists: lists})
+}
+
+func UpsertRuleGroup(path string, group RuleGroup) error {
+	lists := map[string][]string{}
+	if rules := cleanList(group.Rules); len(rules) > 0 {
+		lists["rule"] = rules
+	}
+	return upsert(path, section{typ: "rule_group", name: group.ID, options: map[string]string{
+		"enabled": boolString(group.Enabled),
+		"name":    valueOrDefault(group.Name, group.ID),
+	}, lists: lists})
+}
+
+// SetRouting replaces the ordered route list and the final target in one
+// write. Routes are re-emitted at the end of the file in the given order,
+// which is the order they render in.
+func SetRouting(path string, final string, routes []Route) error {
+	return editConfig(path, func(sections []section) ([]section, error) {
+		kept := make([]section, 0, len(sections)+len(routes))
+		foundManager := false
+		for _, sec := range sections {
+			if sec.typ == "route" {
+				continue
+			}
+			if sec.typ == "manager" && sec.name == "main" {
+				setOrDelete(sec.options, "final", final)
+				foundManager = true
+			}
+			kept = append(kept, sec)
+		}
+		if !foundManager {
+			return nil, fmt.Errorf("manager main section not found")
+		}
+		for i, route := range routes {
+			kept = append(kept, section{typ: "route", name: fmt.Sprintf("route_%d", i+1), options: map[string]string{
+				"enabled":    boolString(route.Enabled),
+				"rule_group": route.RuleGroup,
+				"outbound":   route.Outbound,
+			}, lists: map[string][]string{}})
+		}
+		return kept, nil
+	})
+}
+
+// SetManagerOption sets (or, for an empty value, removes) one option of the
+// manager main section.
+func SetManagerOption(path string, key string, value string) error {
+	return editConfig(path, func(sections []section) ([]section, error) {
+		for i := range sections {
+			if sections[i].typ == "manager" && sections[i].name == "main" {
+				setOrDelete(sections[i].options, key, value)
+				return sections, nil
+			}
+		}
+		return nil, fmt.Errorf("manager main section not found")
+	})
+}
+
+// DeleteTarget removes an outbound, subscription, or outbound group and every
+// reference to it: group memberships, routes that send to it, the final
+// target, DNS detours, and device pins.
+func DeleteTarget(path string, typ string, id string) error {
+	return editConfig(path, func(sections []section) ([]section, error) {
+		next := make([]section, 0, len(sections))
+		found := false
+		for _, sec := range sections {
+			switch {
+			case sec.typ == typ && sec.name == id:
+				found = true
+				continue
+			case sec.typ == "route" && sec.options["outbound"] == id:
+				continue
+			case sec.typ == "outbound_group":
+				removeListValue(&sec, "member", id)
+			case sec.typ == "manager" && sec.options["final"] == id:
+				delete(sec.options, "final")
+			case sec.typ == "dns_server" && sec.options["detour"] == id:
+				delete(sec.options, "detour")
+			case sec.typ == "proxy_device" && sec.options["group"] == id:
+				delete(sec.options, "group")
+			}
+			next = append(next, sec)
+		}
+		if !found {
+			return nil, fmt.Errorf("%s %q not found", typ, id)
+		}
+		return next, nil
+	})
+}
+
+// DeleteRuleGroup removes a rule group, the routes that use it, and its
+// references from DNS rules (dropping DNS rules left with nothing to match).
+func DeleteRuleGroup(path string, id string) error {
+	return editConfig(path, func(sections []section) ([]section, error) {
+		next := make([]section, 0, len(sections))
+		found := false
+		for _, sec := range sections {
+			switch {
+			case sec.typ == "rule_group" && sec.name == id:
+				found = true
+				continue
+			case sec.typ == "route" && sec.options["rule_group"] == id:
+				continue
+			case sec.typ == "dns_rule":
+				removeListValue(&sec, "rule_group", id)
+				if len(sec.lists["rule_group"]) == 0 && len(sec.lists["source_ip"]) == 0 {
+					continue
+				}
+			}
+			next = append(next, sec)
+		}
+		if !found {
+			return nil, fmt.Errorf("rule group %q not found", id)
+		}
+		return next, nil
+	})
+}
+
+func DeleteDNSServer(path string, serverID string) error {
+	if serverID == "" {
+		return fmt.Errorf("dns server id is required")
 	}
 	return editConfig(path, func(sections []section) ([]section, error) {
 		next := make([]section, 0, len(sections))
 		found := false
 		for _, sec := range sections {
-			if sec.typ == "node" && sec.name == nodeID {
-				if sec.options["subscription"] != "" {
-					return nil, fmt.Errorf("node %q belongs to subscription %q", nodeID, sec.options["subscription"])
-				}
+			switch {
+			case sec.typ == "dns_server" && sec.name == serverID:
 				found = true
 				continue
-			}
-			if sec.typ == "group" && sec.options["selected_node"] == nodeID {
-				delete(sec.options, "selected_node")
+			case sec.typ == "dns_rule" && sec.options["server"] == serverID:
+				continue
+			case sec.typ == "manager" && sec.options["dns_final"] == serverID:
+				delete(sec.options, "dns_final")
 			}
 			next = append(next, sec)
 		}
 		if !found {
-			return nil, fmt.Errorf("node %q not found", nodeID)
+			return nil, fmt.Errorf("dns server %q not found", serverID)
 		}
 		return next, nil
 	})
+}
+
+func dnsRuleSection(rule DNSRule) section {
+	options := map[string]string{
+		"enabled": boolString(rule.Enabled),
+		"name":    valueOrDefault(rule.Name, rule.ID),
+	}
+	setOrDelete(options, "server", rule.Server)
+	lists := map[string][]string{}
+	if sources := cleanList(rule.Sources); len(sources) > 0 {
+		lists["source_ip"] = sources
+	}
+	if groups := cleanList(rule.RuleGroups); len(groups) > 0 {
+		lists["rule_group"] = groups
+	}
+	return section{
+		typ:     "dns_rule",
+		name:    rule.ID,
+		options: options,
+		lists:   lists,
+	}
 }
 
 func SetManagerEnabled(path string, enabled bool) error {
@@ -296,31 +308,6 @@ func SetManagerRuntimeMode(path string, mode string) error {
 			return sections, nil
 		}
 		return nil, fmt.Errorf("manager main section not found")
-	})
-}
-
-func SelectNode(path string, groupID string, nodeID string) error {
-	if groupID == "" {
-		return fmt.Errorf("group id is required")
-	}
-	if nodeID == "" {
-		return fmt.Errorf("node id is required")
-	}
-	return editConfig(path, func(sections []section) ([]section, error) {
-		for i := range sections {
-			if sections[i].typ != "group" || sections[i].name != groupID {
-				continue
-			}
-			if sections[i].options == nil {
-				sections[i].options = map[string]string{}
-			}
-			sections[i].options["selected_node"] = nodeID
-			if sections[i].options["strategy"] != "selector" {
-				sections[i].options["strategy"] = "manual"
-			}
-			return sections, nil
-		}
-		return nil, fmt.Errorf("group %q not found", groupID)
 	})
 }
 
@@ -386,183 +373,6 @@ func UpsertDNSServer(path string, server DNSServer) error {
 	})
 }
 
-func DeleteDNSServer(path string, serverID string) error {
-	if serverID == "" {
-		return fmt.Errorf("dns server id is required")
-	}
-	return editConfig(path, func(sections []section) ([]section, error) {
-		next := make([]section, 0, len(sections))
-		found := false
-		for _, sec := range sections {
-			switch {
-			case sec.typ == "dns_server" && sec.name == serverID:
-				found = true
-				continue
-			case sec.typ == "dns_rule" && sec.options["server"] == serverID:
-				continue
-			case sec.typ == "group" && sec.options["dns_final"] == serverID:
-				delete(sec.options, "dns_final")
-			}
-			next = append(next, sec)
-		}
-		if !found {
-			return nil, fmt.Errorf("dns server %q not found", serverID)
-		}
-		return next, nil
-	})
-}
-
-func UpsertRouteRule(path string, rule RouteRule) error {
-	if rule.ID == "" {
-		return fmt.Errorf("route rule id is required")
-	}
-	if rule.Name == "" {
-		rule.Name = rule.ID
-	}
-	if rule.Outbound == "" {
-		rule.Outbound = "proxy"
-	}
-	return editConfig(path, func(sections []section) ([]section, error) {
-		replacement := routeRuleSection(rule)
-		for i, sec := range sections {
-			if sec.typ == "route_rule" && sec.name == rule.ID {
-				sections[i] = replacement
-				return sections, nil
-			}
-		}
-		return append(sections, replacement), nil
-	})
-}
-
-func DeleteRouteRule(path string, ruleID string) error {
-	if ruleID == "" {
-		return fmt.Errorf("route rule id is required")
-	}
-	return editConfig(path, func(sections []section) ([]section, error) {
-		next := make([]section, 0, len(sections))
-		found := false
-		for _, sec := range sections {
-			if sec.typ == "route_rule" && sec.name == ruleID {
-				found = true
-				continue
-			}
-			next = append(next, sec)
-		}
-		if !found {
-			return nil, fmt.Errorf("route rule %q not found", ruleID)
-		}
-		return next, nil
-	})
-}
-
-// SetGroupSettings updates the user-editable fields of a group section
-// (name, strategy, route/DNS defaults, selected node, subscriptions) while
-// preserving health metadata managed by the daemon.
-func SetGroupSettings(path string, group Group) error {
-	if group.ID == "" {
-		return fmt.Errorf("group id is required")
-	}
-	return editConfig(path, func(sections []section) ([]section, error) {
-		for i := range sections {
-			if sections[i].typ != "group" || sections[i].name != group.ID {
-				continue
-			}
-			if sections[i].options == nil {
-				sections[i].options = map[string]string{}
-			}
-			opts := sections[i].options
-			opts["name"] = valueOrDefault(group.Name, group.ID)
-			opts["strategy"] = valueOrDefault(group.Strategy, "manual")
-			opts["route_final"] = valueOrDefault(group.RouteFinal, "proxy")
-			setOrDelete(opts, "dns_final", group.DNSFinal)
-			setOrDelete(opts, "selected_node", group.SelectedNode)
-			if sections[i].lists == nil {
-				sections[i].lists = map[string][]string{}
-			}
-			if subs := cleanList(group.Subscriptions); len(subs) > 0 {
-				sections[i].lists["subscription"] = subs
-			} else {
-				delete(sections[i].lists, "subscription")
-			}
-			return sections, nil
-		}
-		return nil, fmt.Errorf("group %q not found", group.ID)
-	})
-}
-
-func UpsertRuleSet(path string, ruleset RuleSet) error {
-	if ruleset.ID == "" {
-		return fmt.Errorf("ruleset id is required")
-	}
-	if ruleset.Name == "" {
-		ruleset.Name = ruleset.ID
-	}
-	if ruleset.Type == "" {
-		ruleset.Type = "local"
-	}
-	if ruleset.Format == "" {
-		ruleset.Format = "srs"
-	}
-	if ruleset.UpdateInterval == "" {
-		ruleset.UpdateInterval = "168h"
-	}
-	return editConfig(path, func(sections []section) ([]section, error) {
-		found := false
-		for i, sec := range sections {
-			if !isRuleSetSection(sec, ruleset.ID) {
-				continue
-			}
-			if ruleset.LastUpdate == "" {
-				ruleset.LastUpdate = sec.options["last_update"]
-			}
-			if ruleset.LastError == "" {
-				ruleset.LastError = sec.options["last_error"]
-			}
-			sections[i] = ruleSetSection(sec.name, ruleset)
-			found = true
-			break
-		}
-		if !found {
-			sections = append(sections, ruleSetSection(sectionNameFromID(ruleset.ID), ruleset))
-		}
-		return sections, nil
-	})
-}
-
-func DeleteRuleSet(path string, rulesetID string) error {
-	if rulesetID == "" {
-		return fmt.Errorf("ruleset id is required")
-	}
-	return editConfig(path, func(sections []section) ([]section, error) {
-		next := make([]section, 0, len(sections))
-		found := false
-		for _, sec := range sections {
-			if isRuleSetSection(sec, rulesetID) {
-				found = true
-				continue
-			}
-			if sec.typ == "route_rule" || sec.typ == "dns_rule" {
-				removeListValue(&sec, "ruleset", rulesetID)
-				// A rule that no longer matches anything (no source IPs and no
-				// rule sets) is meaningless, so drop it instead of leaving an
-				// invalid section behind.
-				if len(sec.lists["source_ip"]) == 0 && len(sec.lists["ruleset"]) == 0 {
-					continue
-				}
-			}
-			next = append(next, sec)
-		}
-		if !found {
-			return nil, fmt.Errorf("ruleset %q not found", rulesetID)
-		}
-		return next, nil
-	})
-}
-
-// UpsertTransparent rewrites the transparent section and the full set of
-// proxy_device sections in one shot. Cross-section rules (e.g. transparent
-// proxying and tun cannot both be enabled) are enforced by editConfig's
-// validation pass, so an invalid combination is rejected before it is written.
 func UpsertTransparent(path string, transparent Transparent) error {
 	return editConfig(path, func(sections []section) ([]section, error) {
 		kept := make([]section, 0, len(sections))
@@ -595,7 +405,13 @@ func UpsertTUN(path string, tun TUN) error {
 	})
 }
 
+// editMu serialises read-modify-write cycles: the RPC handlers and the
+// schedulers all edit the same file.
+var editMu sync.Mutex
+
 func editConfig(path string, mutate func([]section) ([]section, error)) error {
+	editMu.Lock()
+	defer editMu.Unlock()
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
@@ -622,108 +438,6 @@ func editConfig(path string, mutate func([]section) ([]section, error)) error {
 	return nil
 }
 
-func nodeSection(node Node) section {
-	options := map[string]string{
-		"enabled": boolString(node.Enabled),
-		"name":    node.Name,
-		"type":    node.Type,
-	}
-	set := func(key string, value string) {
-		if value != "" {
-			options[key] = value
-		}
-	}
-	set("address", node.Address)
-	set("server", node.Server)
-	if node.Port > 0 {
-		options["port"] = strconv.Itoa(node.Port)
-	}
-	set("uuid", node.UUID)
-	set("password", node.Password)
-	set("method", node.Method)
-	set("security", node.Security)
-	if node.TLS {
-		options["tls"] = "1"
-	}
-	set("flow", node.Flow)
-	set("transport", node.Transport)
-	set("host", node.Host)
-	set("path", node.Path)
-	set("sni", node.SNI)
-	set("alpn", node.ALPN)
-	if node.Insecure {
-		options["insecure"] = "1"
-	}
-	set("reality_public_key", node.RealityPublicKey)
-	set("reality_short_id", node.RealityShortID)
-	set("fingerprint", node.Fingerprint)
-	set("congestion", node.Congestion)
-	set("udp_relay_mode", node.UDPRelayMode)
-	set("tag", valueOrDefault(node.Tag, node.ID))
-	set("subscription", node.Subscription)
-	set("health", node.Health)
-	if node.LatencyMS > 0 {
-		options["latency_ms"] = strconv.Itoa(node.LatencyMS)
-	}
-	set("last_check", node.LastCheck)
-	return section{
-		typ:     "node",
-		name:    node.ID,
-		options: options,
-		lists:   map[string][]string{},
-	}
-}
-
-func subscriptionSection(subscription Subscription) section {
-	options := map[string]string{
-		"enabled":         boolString(subscription.Enabled),
-		"name":            subscription.Name,
-		"format":          valueOrDefault(subscription.Format, "auto"),
-		"update_interval": valueOrDefault(subscription.UpdateInterval, "24h"),
-		"health":          valueOrDefault(subscription.Health, "unknown"),
-	}
-	set := func(key string, value string) {
-		if value != "" {
-			options[key] = value
-		}
-	}
-	set("url", subscription.URL)
-	set("last_update", subscription.LastUpdate)
-	set("last_error", subscription.LastError)
-	set("last_check", subscription.LastCheck)
-	if subscription.LatencyMS > 0 {
-		options["latency_ms"] = strconv.Itoa(subscription.LatencyMS)
-	}
-	return section{
-		typ:     "subscription",
-		name:    subscription.ID,
-		options: options,
-		lists:   map[string][]string{},
-	}
-}
-
-func dnsRuleSection(rule DNSRule) section {
-	options := map[string]string{
-		"enabled": boolString(rule.Enabled),
-		"name":    valueOrDefault(rule.Name, rule.ID),
-	}
-	setOrDelete(options, "group", rule.Group)
-	setOrDelete(options, "server", rule.Server)
-	lists := map[string][]string{}
-	if sources := cleanList(rule.Sources); len(sources) > 0 {
-		lists["source_ip"] = sources
-	}
-	if rulesets := cleanList(rule.RuleSets); len(rulesets) > 0 {
-		lists["ruleset"] = rulesets
-	}
-	return section{
-		typ:     "dns_rule",
-		name:    rule.ID,
-		options: options,
-		lists:   lists,
-	}
-}
-
 func dnsServerSection(server DNSServer) section {
 	options := map[string]string{
 		"enabled": boolString(server.Enabled),
@@ -740,54 +454,6 @@ func dnsServerSection(server DNSServer) section {
 	return section{
 		typ:     "dns_server",
 		name:    server.ID,
-		options: options,
-		lists:   map[string][]string{},
-	}
-}
-
-func routeRuleSection(rule RouteRule) section {
-	options := map[string]string{
-		"enabled":  boolString(rule.Enabled),
-		"name":     valueOrDefault(rule.Name, rule.ID),
-		"outbound": valueOrDefault(rule.Outbound, "proxy"),
-	}
-	setOrDelete(options, "group", rule.Group)
-	lists := map[string][]string{}
-	if sources := cleanList(rule.Sources); len(sources) > 0 {
-		lists["source_ip"] = sources
-	}
-	if rulesets := cleanList(rule.RuleSets); len(rulesets) > 0 {
-		lists["ruleset"] = rulesets
-	}
-	return section{
-		typ:     "route_rule",
-		name:    rule.ID,
-		options: options,
-		lists:   lists,
-	}
-}
-
-func ruleSetSection(sectionName string, ruleset RuleSet) section {
-	options := map[string]string{
-		"id":              ruleset.ID,
-		"enabled":         boolString(ruleset.Enabled),
-		"name":            ruleset.Name,
-		"type":            valueOrDefault(ruleset.Type, "local"),
-		"format":          valueOrDefault(ruleset.Format, "srs"),
-		"update_interval": valueOrDefault(ruleset.UpdateInterval, "168h"),
-	}
-	set := func(key string, value string) {
-		if value != "" {
-			options[key] = value
-		}
-	}
-	set("url", ruleset.URL)
-	set("path", ruleset.Path)
-	set("last_update", ruleset.LastUpdate)
-	set("last_error", ruleset.LastError)
-	return section{
-		typ:     "ruleset",
-		name:    sectionName,
 		options: options,
 		lists:   map[string][]string{},
 	}
@@ -838,25 +504,6 @@ func tunSection(tun TUN) section {
 	return section{typ: "tun", name: "tun", options: options, lists: map[string][]string{}}
 }
 
-func attachSubscriptionToGroup(sections []section, groupID string, subscriptionID string) error {
-	for i := range sections {
-		if sections[i].typ != "group" || sections[i].name != groupID {
-			continue
-		}
-		if sections[i].lists == nil {
-			sections[i].lists = map[string][]string{}
-		}
-		for _, existing := range sections[i].lists["subscription"] {
-			if existing == subscriptionID {
-				return nil
-			}
-		}
-		sections[i].lists["subscription"] = append(sections[i].lists["subscription"], subscriptionID)
-		return nil
-	}
-	return fmt.Errorf("group %q not found", groupID)
-}
-
 func setOrDelete(options map[string]string, key string, value string) {
 	if value == "" {
 		delete(options, key)
@@ -898,22 +545,6 @@ func sectionNameFromID(id string) string {
 		return "entry"
 	}
 	return name
-}
-
-func applyHealthOptions(sec *section, state HealthState, checkedAt string) {
-	if state.Health != "" {
-		sec.options["health"] = state.Health
-	}
-	if state.LatencyMS > 0 {
-		sec.options["latency_ms"] = strconv.Itoa(state.LatencyMS)
-	} else {
-		delete(sec.options, "latency_ms")
-	}
-	if state.LastCheck != "" {
-		sec.options["last_check"] = state.LastCheck
-	} else {
-		sec.options["last_check"] = checkedAt
-	}
 }
 
 func renderUCI(sections []section) string {

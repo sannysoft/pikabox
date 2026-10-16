@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"sort"
 	"strings"
 )
 
@@ -28,11 +29,6 @@ func ErrorStrings(err error) []string {
 func Validate(cfg Config) error {
 	var errors []string
 
-	if cfg.Manager.ActiveGroup == "" {
-		errors = append(errors, "manager.main.active_group is required")
-	} else if _, ok := cfg.Groups[cfg.Manager.ActiveGroup]; !ok {
-		errors = append(errors, fmt.Sprintf("manager.main.active_group references missing group %q", cfg.Manager.ActiveGroup))
-	}
 	if cfg.Manager.SingBoxBinary == "" {
 		errors = append(errors, "manager.main.sing_box_bin is required")
 	}
@@ -45,31 +41,18 @@ func Validate(cfg Config) error {
 	if !inSet(cfg.Manager.LogLevel, "trace", "debug", "info", "warn", "error", "fatal", "panic") {
 		errors = append(errors, fmt.Sprintf("manager.main.log_level is unsupported: %q", cfg.Manager.LogLevel))
 	}
+	if cfg.Manager.Final != "" && cfg.Kind(cfg.Manager.Final) == "" {
+		errors = append(errors, fmt.Sprintf("manager.main.final references missing target %q", cfg.Manager.Final))
+	}
+	if cfg.Manager.DNSFinal != "" {
+		if _, ok := cfg.DNSServers[cfg.Manager.DNSFinal]; !ok {
+			errors = append(errors, fmt.Sprintf("manager.main.dns_final references missing dns_server %q", cfg.Manager.DNSFinal))
+		}
+	}
 
-	for id, group := range cfg.Groups {
-		if group.Name == "" {
-			errors = append(errors, fmt.Sprintf("group.%s.name is required", id))
-		}
-		if !inSet(group.Strategy, "manual", "selector", "urltest", "load-balance") {
-			errors = append(errors, fmt.Sprintf("group.%s.strategy is unsupported: %q", id, group.Strategy))
-		}
-		if !inSet(group.RouteFinal, "direct", "proxy", "block") {
-			errors = append(errors, fmt.Sprintf("group.%s.route_final must be direct, proxy, or block, got %q", id, group.RouteFinal))
-		}
-		if group.DNSFinal != "" {
-			if _, ok := cfg.DNSServers[group.DNSFinal]; !ok {
-				errors = append(errors, fmt.Sprintf("group.%s.dns_final references missing dns_server %q", id, group.DNSFinal))
-			}
-		}
-		if group.SelectedNode != "" {
-			if _, ok := cfg.Nodes[group.SelectedNode]; !ok {
-				errors = append(errors, fmt.Sprintf("group.%s.selected_node references missing node %q", id, group.SelectedNode))
-			}
-		}
-		for _, subscriptionID := range group.Subscriptions {
-			if _, ok := cfg.Subscriptions[subscriptionID]; !ok {
-				errors = append(errors, fmt.Sprintf("group.%s.subscription references missing subscription %q", id, subscriptionID))
-			}
+	for id, outbound := range cfg.Outbounds {
+		if outbound.Enabled && strings.TrimSpace(outbound.Source) == "" {
+			errors = append(errors, fmt.Sprintf("outbound.%s.source is required when enabled", id))
 		}
 	}
 
@@ -80,40 +63,39 @@ func Validate(cfg Config) error {
 		if !inSet(subscription.Format, "auto", "base64", "plain") {
 			errors = append(errors, fmt.Sprintf("subscription.%s.format is unsupported: %q", id, subscription.Format))
 		}
+		if err := CompileFilter(subscription.Filter); err != nil {
+			errors = append(errors, fmt.Sprintf("subscription.%s.filter: %v", id, err))
+		}
 	}
 
-	for id, node := range cfg.Nodes {
-		if !node.Enabled {
-			continue
+	for id, group := range cfg.OutboundGroups {
+		if !inSet(group.Mode, "urltest", "fallback") {
+			errors = append(errors, fmt.Sprintf("outbound_group.%s.mode must be urltest or fallback, got %q", id, group.Mode))
 		}
-		if node.Type == "" {
-			errors = append(errors, fmt.Sprintf("node.%s.type is required", id))
-			continue
+		for _, member := range group.Members {
+			if cfg.Kind(member) == "" {
+				errors = append(errors, fmt.Sprintf("outbound_group.%s.member references missing %q", id, member))
+			}
 		}
-		switch node.Type {
-		case "direct":
-		case "shadowsocks":
-			if firstNonEmpty(node.Server, node.Address) == "" || node.Port == 0 || node.Method == "" || node.Password == "" {
-				errors = append(errors, fmt.Sprintf("node.%s shadowsocks requires server/address, port, method, and password", id))
+	}
+	if cycle := groupCycle(cfg); cycle != "" {
+		errors = append(errors, fmt.Sprintf("outbound groups form a cycle: %s", cycle))
+	}
+
+	for id, group := range cfg.RuleGroups {
+		for _, rule := range group.Rules {
+			if _, _, err := ParseRule(rule); err != nil {
+				errors = append(errors, fmt.Sprintf("rule_group.%s: %v", id, err))
 			}
-		case "trojan":
-			if firstNonEmpty(node.Server, node.Address) == "" || node.Port == 0 || node.Password == "" {
-				errors = append(errors, fmt.Sprintf("node.%s trojan requires server/address, port, and password", id))
-			}
-		case "vmess", "vless":
-			if firstNonEmpty(node.Server, node.Address) == "" || node.Port == 0 || node.UUID == "" {
-				errors = append(errors, fmt.Sprintf("node.%s %s requires server/address, port, and uuid", id, node.Type))
-			}
-		case "hysteria2":
-			if firstNonEmpty(node.Server, node.Address) == "" || node.Port == 0 || node.Password == "" {
-				errors = append(errors, fmt.Sprintf("node.%s hysteria2 requires server/address, port, and password", id))
-			}
-		case "tuic":
-			if firstNonEmpty(node.Server, node.Address) == "" || node.Port == 0 || node.UUID == "" || node.Password == "" {
-				errors = append(errors, fmt.Sprintf("node.%s tuic requires server/address, port, uuid, and password", id))
-			}
-		default:
-			errors = append(errors, fmt.Sprintf("node.%s.type is unsupported: %q", id, node.Type))
+		}
+	}
+
+	for _, route := range cfg.Routes {
+		if _, ok := cfg.RuleGroups[route.RuleGroup]; !ok {
+			errors = append(errors, fmt.Sprintf("route.%s.rule_group references missing %q", route.ID, route.RuleGroup))
+		}
+		if cfg.Kind(route.Outbound) == "" {
+			errors = append(errors, fmt.Sprintf("route.%s.outbound references missing %q", route.ID, route.Outbound))
 		}
 	}
 
@@ -124,49 +106,26 @@ func Validate(cfg Config) error {
 		if !inSet(server.Type, "udp", "tcp", "tls", "dot", "doh", "doq", "https", "quic") {
 			errors = append(errors, fmt.Sprintf("dns_server.%s.type is unsupported: %q", id, server.Type))
 		}
-		if server.Detour != "" && !inSet(server.Detour, "direct", "proxy") {
-			errors = append(errors, fmt.Sprintf("dns_server.%s.detour must be direct or proxy, got %q", id, server.Detour))
+		// "proxy" is shorthand for the final target.
+		if server.Detour != "" && server.Detour != "proxy" && (server.Detour == "block" || cfg.Kind(server.Detour) == "") {
+			errors = append(errors, fmt.Sprintf("dns_server.%s.detour references missing %q", id, server.Detour))
 		}
 	}
 
 	for id, rule := range cfg.DNSRules {
-		validateRuleGroup(&errors, "dns_rule", id, rule.Group, cfg)
 		if rule.Server == "" {
 			errors = append(errors, fmt.Sprintf("dns_rule.%s.server is required", id))
 		} else if _, ok := cfg.DNSServers[rule.Server]; !ok {
 			errors = append(errors, fmt.Sprintf("dns_rule.%s.server references missing dns_server %q", id, rule.Server))
 		}
-		if len(rule.Sources) == 0 && len(rule.RuleSets) == 0 {
-			errors = append(errors, fmt.Sprintf("dns_rule.%s needs at least one source_ip or ruleset", id))
+		if len(rule.Sources) == 0 && len(rule.RuleGroups) == 0 {
+			errors = append(errors, fmt.Sprintf("dns_rule.%s needs at least one source_ip or rule_group", id))
 		}
 		validateSourceCIDRs(&errors, "dns_rule", id, rule.Sources)
-		validateRuleSetRefs(&errors, "dns_rule", id, rule.RuleSets, cfg)
-	}
-
-	for id, rule := range cfg.RouteRules {
-		validateRuleGroup(&errors, "route_rule", id, rule.Group, cfg)
-		if !inSet(rule.Outbound, "direct", "proxy", "block") {
-			errors = append(errors, fmt.Sprintf("route_rule.%s.outbound must be direct, proxy, or block, got %q", id, rule.Outbound))
-		}
-		if len(rule.Sources) == 0 && len(rule.RuleSets) == 0 {
-			errors = append(errors, fmt.Sprintf("route_rule.%s needs at least one source_ip or ruleset", id))
-		}
-		validateSourceCIDRs(&errors, "route_rule", id, rule.Sources)
-		validateRuleSetRefs(&errors, "route_rule", id, rule.RuleSets, cfg)
-	}
-
-	for id, ruleset := range cfg.RuleSets {
-		if !inSet(ruleset.Type, "local", "remote") {
-			errors = append(errors, fmt.Sprintf("ruleset.%s.type is unsupported: %q", id, ruleset.Type))
-		}
-		if !inSet(ruleset.Format, "srs", "binary", "source") {
-			errors = append(errors, fmt.Sprintf("ruleset.%s.format is unsupported: %q", id, ruleset.Format))
-		}
-		if ruleset.Enabled && ruleset.Type == "local" && ruleset.Path == "" {
-			errors = append(errors, fmt.Sprintf("ruleset.%s.path is required for local rulesets", id))
-		}
-		if ruleset.Enabled && ruleset.Type == "remote" && ruleset.URL == "" && ruleset.Path == "" {
-			errors = append(errors, fmt.Sprintf("ruleset.%s needs url or path when enabled", id))
+		for _, group := range rule.RuleGroups {
+			if _, ok := cfg.RuleGroups[group]; !ok {
+				errors = append(errors, fmt.Sprintf("dns_rule.%s.rule_group references missing %q", id, group))
+			}
 		}
 	}
 
@@ -228,10 +187,8 @@ func validateTransparent(errors *[]string, cfg Config) {
 				*errors = append(*errors, fmt.Sprintf("proxy_device.%s.ipv6 is invalid: %q", device.ID, device.IPv6))
 			}
 		}
-		if device.Group != "" {
-			if _, ok := cfg.Groups[device.Group]; !ok {
-				*errors = append(*errors, fmt.Sprintf("proxy_device.%s.group references missing group %q", device.ID, device.Group))
-			}
+		if device.Group != "" && cfg.Kind(device.Group) == "" {
+			*errors = append(*errors, fmt.Sprintf("proxy_device.%s.group references missing target %q", device.ID, device.Group))
 		}
 	}
 
@@ -257,14 +214,42 @@ func validateTransparent(errors *[]string, cfg Config) {
 	}
 }
 
-func validateRuleGroup(errors *[]string, kind string, id string, groupID string, cfg Config) {
-	if groupID == "" {
-		*errors = append(*errors, fmt.Sprintf("%s.%s.group is required", kind, id))
-		return
+// groupCycle returns a description of the first outbound-group cycle, or "".
+func groupCycle(cfg Config) string {
+	state := map[string]int{} // 0 unvisited, 1 on stack, 2 done
+	var path []string
+	var visit func(id string) string
+	visit = func(id string) string {
+		switch state[id] {
+		case 1:
+			return strings.Join(append(path, id), " -> ")
+		case 2:
+			return ""
+		}
+		state[id] = 1
+		path = append(path, id)
+		for _, member := range cfg.OutboundGroups[id].Members {
+			if _, isGroup := cfg.OutboundGroups[member]; isGroup {
+				if cycle := visit(member); cycle != "" {
+					return cycle
+				}
+			}
+		}
+		path = path[:len(path)-1]
+		state[id] = 2
+		return ""
 	}
-	if _, ok := cfg.Groups[groupID]; !ok {
-		*errors = append(*errors, fmt.Sprintf("%s.%s.group references missing group %q", kind, id, groupID))
+	ids := make([]string, 0, len(cfg.OutboundGroups))
+	for id := range cfg.OutboundGroups {
+		ids = append(ids, id)
 	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		if cycle := visit(id); cycle != "" {
+			return cycle
+		}
+	}
+	return ""
 }
 
 func validateSourceCIDRs(errors *[]string, kind string, id string, sources []string) {
@@ -274,14 +259,6 @@ func validateSourceCIDRs(errors *[]string, kind string, id string, sources []str
 		}
 		if _, err := netip.ParsePrefix(source); err != nil {
 			*errors = append(*errors, fmt.Sprintf("%s.%s.source_ip is invalid: %q", kind, id, source))
-		}
-	}
-}
-
-func validateRuleSetRefs(errors *[]string, kind string, id string, rulesets []string, cfg Config) {
-	for _, rulesetID := range rulesets {
-		if _, ok := cfg.RuleSets[rulesetID]; !ok {
-			*errors = append(*errors, fmt.Sprintf("%s.%s.ruleset references missing ruleset %q", kind, id, rulesetID))
 		}
 	}
 }

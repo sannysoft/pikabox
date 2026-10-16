@@ -4,753 +4,429 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	managerconfig "github.com/openwrt-singbox/singbox-manager/internal/config"
 )
 
-// targetConfig builds a manager config that mirrors the reference sing-box
-// configuration: per-source DNS rules, a per-source route rule combined with a
-// rule set, remote rule sets, and a VLESS httpupgrade node behind a selector.
-func targetConfig() managerconfig.Config {
+type document struct {
+	DNS       dnsConfig        `json:"dns"`
+	Inbounds  []map[string]any `json:"inbounds"`
+	Outbounds []map[string]any `json:"outbounds"`
+	Route     struct {
+		Rules                 []map[string]any `json:"rules"`
+		RuleSet               []map[string]any `json:"rule_set"`
+		Final                 string           `json:"final"`
+		DefaultDomainResolver string           `json:"default_domain_resolver"`
+	} `json:"route"`
+	Experimental map[string]any `json:"experimental"`
+}
+
+func renderDoc(t *testing.T, cfg managerconfig.Config) (document, []byte) {
+	t.Helper()
+	data, err := Render(cfg)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	var doc document
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatalf("unmarshal: %v\n%s", err, data)
+	}
+	return doc, data
+}
+
+func (doc document) outbound(tag string) map[string]any {
+	for _, outbound := range doc.Outbounds {
+		if outbound["tag"] == tag {
+			return outbound
+		}
+	}
+	return nil
+}
+
+// isolate points subscription state at a temp dir so tests never read /etc.
+func isolate(t *testing.T) {
+	t.Helper()
+	managerconfig.StateDir, managerconfig.RunDir, managerconfig.RuleSetDir = t.TempDir(), t.TempDir(), t.TempDir()
+}
+
+func select_(t *testing.T, sub string, ids ...string) {
+	t.Helper()
+	state := managerconfig.SubscriptionState{Selected: ids}
+	for _, id := range ids {
+		state.Candidates = append(state.Candidates, managerconfig.Candidate{ID: id, Outbound: map[string]any{
+			"type": "trojan", "tag": id, "server": id + ".example.com", "server_port": 443, "password": "p",
+		}})
+		state.Matched = append(state.Matched, id)
+	}
+	if err := managerconfig.SaveSubscriptionState(sub, state); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func strings_(v any) []string {
+	var out []string
+	for _, item := range v.([]any) {
+		out = append(out, item.(string))
+	}
+	return out
+}
+
+func baseConfig() managerconfig.Config {
 	cfg := managerconfig.DefaultConfig()
-	cfg.Manager.Enabled = true
-	cfg.Manager.LogLevel = "info"
-	cfg.Manager.RuntimeMode = "rule"
-	cfg.Manager.ActiveGroup = "home"
-	cfg.Manager.MixedPort = 2080
-	cfg.Manager.TProxyPort = 7893
-	cfg.Manager.DNSPort = 1053
-	cfg.Transparent.DefaultMode = "tproxy"
-	cfg.Transparent.DNSHijack = true
-	cfg.Transparent.LANIfnames = []string{"br-lan"}
-
-	cfg.Groups["home"] = managerconfig.Group{
-		ID:           "home",
-		Enabled:      true,
-		Name:         "Home",
-		Strategy:     "manual",
-		SelectedNode: "vless1",
-		RouteFinal:   "proxy",
-		DNSFinal:     "cloudflare_doh",
-	}
-
-	cfg.Nodes["vless1"] = managerconfig.Node{
-		ID:        "vless1",
-		Enabled:   true,
-		Type:      "vless",
-		Server:    "69.84.182.16",
-		Port:      443,
-		UUID:      "abd4fd93-f23d-4c2e-ac8a-bce395947e6d",
-		TLS:       true,
-		SNI:       "v2.mokhtari94.ir",
-		ALPN:      "http/1.1",
-		Insecure:  true,
-		Transport: "httpupgrade",
-		Host:      "v2.mokhtari94.ir",
-		Path:      "/87IIO0MKecX3r8BQxdso",
-		Tag:       "vless_0b96da71_f27d0bbdc3",
-	}
-
-	cfg.DNSServers["cloudflare_doh"] = managerconfig.DNSServer{
-		ID: "cloudflare_doh", Enabled: true, Name: "Cloudflare DoH",
-		Type: "doh", Address: "https://1.1.1.1/dns-query", Detour: "proxy",
-	}
-	cfg.DNSServers["cloudflare_doh_direct"] = managerconfig.DNSServer{
-		ID: "cloudflare_doh_direct", Enabled: true, Name: "Cloudflare DoH (direct)",
-		Type: "doh", Address: "https://1.1.1.1/dns-query", Detour: "direct",
-	}
-	cfg.DNSServers["local_udp"] = managerconfig.DNSServer{
-		ID: "local_udp", Enabled: true, Name: "Local UDP",
-		Type: "udp", Address: "223.5.5.5",
-	}
-
-	cfg.DNSRules["d10_dev124"] = managerconfig.DNSRule{
-		ID: "d10_dev124", Enabled: true, Name: "Device 124 DNS",
-		Group: "home", Sources: []string{"192.168.200.124/32"}, Server: "cloudflare_doh",
-	}
-	cfg.DNSRules["d20_dev125"] = managerconfig.DNSRule{
-		ID: "d20_dev125", Enabled: true, Name: "Device 125 DNS",
-		Group: "home", Sources: []string{"192.168.200.125/32"}, Server: "cloudflare_doh_direct",
-	}
-
-	cfg.RuleSets["geoip-ir"] = managerconfig.RuleSet{
-		ID: "geoip-ir", Enabled: true, Name: "GeoIP Iran", Type: "remote", Format: "binary",
-		URL:            "https://raw.githubusercontent.com/Chocolate4U/Iran-sing-box-rules/rule-set/geoip-ir.srs",
-		UpdateInterval: "168h",
-	}
-	cfg.RuleSets["geosite-ir"] = managerconfig.RuleSet{
-		ID: "geosite-ir", Enabled: true, Name: "Geosite Iran", Type: "remote", Format: "binary",
-		URL:            "https://raw.githubusercontent.com/Chocolate4U/Iran-sing-box-rules/rule-set/geosite-ir.srs",
-		UpdateInterval: "168h",
-	}
-
-	cfg.RouteRules["r10_dev124_direct"] = managerconfig.RouteRule{
-		ID: "r10_dev124_direct", Enabled: true, Name: "Device 124 direct",
-		Group: "home", Sources: []string{"192.168.200.124/32"}, Outbound: "direct",
-	}
-	cfg.RouteRules["r20_dev125_ir_direct"] = managerconfig.RouteRule{
-		ID: "r20_dev125_ir_direct", Enabled: true, Name: "Device 125 Iran direct",
-		Group: "home", Sources: []string{"192.168.200.125/32"}, RuleSets: []string{"geoip-ir"}, Outbound: "direct",
-	}
-	cfg.RouteRules["r30_dev125_proxy"] = managerconfig.RouteRule{
-		ID: "r30_dev125_proxy", Enabled: true, Name: "Device 125 proxy",
-		Group: "home", Sources: []string{"192.168.200.125/32"}, Outbound: "proxy",
-	}
-	cfg.RouteRules["r40_geoip_direct"] = managerconfig.RouteRule{
-		ID: "r40_geoip_direct", Enabled: true, Name: "Iran IP direct",
-		Group: "home", RuleSets: []string{"geoip-ir"}, Outbound: "direct",
-	}
-	cfg.RouteRules["r50_geosite_direct"] = managerconfig.RouteRule{
-		ID: "r50_geosite_direct", Enabled: true, Name: "Iran site direct",
-		Group: "home", RuleSets: []string{"geosite-ir"}, Outbound: "direct",
-	}
+	cfg.Outbounds["vp1"] = managerconfig.Outbound{ID: "vp1", Enabled: true, Source: "vless://u@vp1.example.com:443?security=reality&pbk=PK&sid=ab&sni=www.mozilla.org&flow=xtls-rprx-vision#vp1"}
+	cfg.Outbounds["js"] = managerconfig.Outbound{ID: "js", Enabled: true, Source: `{"type":"hysteria2","tag":"ignored","server":"hy.example.com","server_port":443,"password":"p"}`}
 	return cfg
 }
 
-func TestRenderMatchesGoldenConfig(t *testing.T) {
-	cfg := targetConfig()
+func TestBuildPlanOutboundsAndSubscriptions(t *testing.T) {
+	isolate(t)
+	cfg := baseConfig()
+	cfg.Outbounds["broken"] = managerconfig.Outbound{ID: "broken", Enabled: true, Source: "nope://x"}
+	cfg.Outbounds["off"] = managerconfig.Outbound{ID: "off", Enabled: false, Source: "trojan://a@b:1"}
+	cfg.Subscriptions["sub1"] = managerconfig.Subscription{ID: "sub1", Enabled: true}
+	cfg.Subscriptions["empty"] = managerconfig.Subscription{ID: "empty", Enabled: true}
+	select_(t, "sub1", "sub1.aaa", "sub1.bbb")
 
-	got, err := Render(cfg)
-	if err != nil {
-		t.Fatalf("render: %v", err)
-	}
-
-	wantPath := filepath.Join("testdata", "config.golden.json")
-	if os.Getenv("UPDATE_GOLDEN") != "" {
-		if err := os.WriteFile(wantPath, got, 0644); err != nil {
-			t.Fatalf("update golden: %v", err)
+	plan := BuildPlan(cfg)
+	for _, tag := range []string{"direct", "block", "vp1", "js", "sub1", "sub1.aaa", "sub1.bbb"} {
+		if !plan.Rendered[tag] {
+			t.Errorf("%s not rendered", tag)
 		}
 	}
-	want, err := os.ReadFile(wantPath)
-	if err != nil {
-		t.Fatalf("read golden: %v", err)
-	}
-	if string(got) != string(want) {
-		t.Fatalf("rendered config mismatch\n--- got ---\n%s\n--- want ---\n%s", got, want)
-	}
-}
-
-func TestRenderPerSourceDNSRules(t *testing.T) {
-	cfg := targetConfig()
-	data, err := Render(cfg)
-	if err != nil {
-		t.Fatalf("render: %v", err)
-	}
-	var document struct {
-		DNS dnsConfig `json:"dns"`
-	}
-	if err := json.Unmarshal(data, &document); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if len(document.DNS.Servers) != 3 {
-		t.Fatalf("dns servers = %d, want 3\n%s", len(document.DNS.Servers), data)
-	}
-	if document.DNS.Final != "cloudflare_doh" {
-		t.Fatalf("dns final = %q, want cloudflare_doh", document.DNS.Final)
-	}
-	if len(document.DNS.Rules) != 2 {
-		t.Fatalf("dns rules = %d, want 2\n%s", len(document.DNS.Rules), data)
-	}
-	first := document.DNS.Rules[0]
-	if first["server"] != "cloudflare_doh" {
-		t.Fatalf("dns rule[0] server = %#v, want cloudflare_doh", first["server"])
-	}
-	if cidrs, ok := first["source_ip_cidr"].([]any); !ok || len(cidrs) != 1 || cidrs[0] != "192.168.200.124/32" {
-		t.Fatalf("dns rule[0] source = %#v, want 192.168.200.124/32", first["source_ip_cidr"])
-	}
-}
-
-func TestRenderDNSServerEmitsExplicitDirectDetour(t *testing.T) {
-	cfg := targetConfig()
-	data, err := Render(cfg)
-	if err != nil {
-		t.Fatalf("render: %v", err)
-	}
-	var document struct {
-		DNS dnsConfig `json:"dns"`
-	}
-	if err := json.Unmarshal(data, &document); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	byTag := map[string]map[string]any{}
-	for _, server := range document.DNS.Servers {
-		byTag[server["tag"].(string)] = server
-	}
-	if byTag["cloudflare_doh_direct"]["detour"] != "direct" {
-		t.Fatalf("cloudflare_doh_direct detour = %#v, want direct", byTag["cloudflare_doh_direct"]["detour"])
-	}
-	if byTag["cloudflare_doh"]["detour"] != "proxy" {
-		t.Fatalf("cloudflare_doh detour = %#v, want proxy", byTag["cloudflare_doh"]["detour"])
-	}
-	if byTag["cloudflare_doh"]["path"] != "/dns-query" {
-		t.Fatalf("cloudflare_doh path = %#v, want /dns-query", byTag["cloudflare_doh"]["path"])
-	}
-}
-
-func TestRenderCombinedRuleSetAndSourceRoute(t *testing.T) {
-	cfg := targetConfig()
-	data, err := Render(cfg)
-	if err != nil {
-		t.Fatalf("render: %v", err)
-	}
-	var document struct {
-		Route routeConfig `json:"route"`
-	}
-	if err := json.Unmarshal(data, &document); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	// Find the combined rule: source 192.168.200.125/32 AND rule_set geoip-ir.
-	var combined map[string]any
-	for _, rule := range document.Route.Rules {
-		_, hasSource := rule["source_ip_cidr"]
-		_, hasRuleSet := rule["rule_set"]
-		if hasSource && hasRuleSet {
-			combined = rule
-			break
+	for _, tag := range []string{"broken", "off", "empty"} {
+		if plan.Rendered[tag] {
+			t.Errorf("%s must not render", tag)
 		}
 	}
-	if combined == nil {
-		t.Fatalf("no combined source+rule_set route rule found\n%s", data)
+	joined := strings.Join(plan.Warnings, "\n")
+	if !strings.Contains(joined, "outbound broken skipped") || !strings.Contains(joined, "subscription empty has no alive outbounds") {
+		t.Fatalf("warnings = %v", plan.Warnings)
 	}
-	if combined["outbound"] != "direct" {
-		t.Fatalf("combined rule outbound = %#v, want direct", combined["outbound"])
+
+	doc, _ := renderDoc(t, cfg)
+	if ob := doc.outbound("vp1"); ob["type"] != "vless" || ob["flow"] != "xtls-rprx-vision" {
+		t.Fatalf("vp1 = %#v", ob)
 	}
-	if cidrs := combined["source_ip_cidr"].([]any); cidrs[0] != "192.168.200.125/32" {
-		t.Fatalf("combined rule source = %#v", combined["source_ip_cidr"])
+	if ob := doc.outbound("js"); ob["type"] != "hysteria2" || ob["server"] != "hy.example.com" {
+		t.Fatalf("json outbound must render with tag = id: %#v", ob)
 	}
-	if sets := combined["rule_set"].([]any); sets[0] != "geoip-ir" {
-		t.Fatalf("combined rule rule_set = %#v", combined["rule_set"])
-	}
-	if len(document.Route.RuleSet) != 2 {
-		t.Fatalf("rule_set definitions = %d, want 2\n%s", len(document.Route.RuleSet), data)
-	}
-	if document.Route.Final != "proxy" {
-		t.Fatalf("route final = %q, want proxy", document.Route.Final)
+	sub := doc.outbound("sub1")
+	if sub["type"] != "urltest" || !reflect.DeepEqual(strings_(sub["outbounds"]), []string{"sub1.aaa", "sub1.bbb"}) {
+		t.Fatalf("subscription group = %#v", sub)
 	}
 }
 
-func TestRenderVLESSHTTPUpgradeNode(t *testing.T) {
-	cfg := targetConfig()
-	data, err := Render(cfg)
-	if err != nil {
-		t.Fatalf("render: %v", err)
+func TestBuildPlanGroups(t *testing.T) {
+	isolate(t)
+	cfg := baseConfig()
+	cfg.Subscriptions["sub1"] = managerconfig.Subscription{ID: "sub1", Enabled: true}
+	cfg.Subscriptions["empty"] = managerconfig.Subscription{ID: "empty", Enabled: true}
+	select_(t, "sub1", "sub1.aaa")
+	cfg.OutboundGroups["inner"] = managerconfig.OutboundGroup{ID: "inner", Enabled: true, Mode: "urltest", Members: []string{"js", "sub1"}}
+	cfg.OutboundGroups["us_out"] = managerconfig.OutboundGroup{ID: "us_out", Enabled: true, Mode: "fallback", Members: []string{"vp1", "empty", "inner", "direct"}}
+	cfg.OutboundGroups["dead"] = managerconfig.OutboundGroup{ID: "dead", Enabled: true, Mode: "urltest", Members: []string{"empty"}}
+	cfg.OutboundGroups["outer"] = managerconfig.OutboundGroup{ID: "outer", Enabled: true, Mode: "urltest", Members: []string{"dead", "us_out"}}
+	cfg.OutboundGroups["off"] = managerconfig.OutboundGroup{ID: "off", Enabled: false, Mode: "urltest", Members: []string{"vp1"}}
+
+	plan := BuildPlan(cfg)
+	if !reflect.DeepEqual(plan.Fallback["us_out"], []string{"vp1", "inner", "direct"}) {
+		t.Fatalf("fallback members = %v (empty subscription dropped, order kept)", plan.Fallback["us_out"])
 	}
-	outbound := renderedOutbound(t, data, "vless_0b96da71_f27d0bbdc3")
-	if outbound["type"] != "vless" || outbound["uuid"] != "abd4fd93-f23d-4c2e-ac8a-bce395947e6d" {
-		t.Fatalf("vless outbound = %#v", outbound)
+	if plan.Rendered["dead"] || plan.Rendered["off"] {
+		t.Fatal("group without members and disabled group must not render")
 	}
-	transport, ok := outbound["transport"].(map[string]any)
-	if !ok || transport["type"] != "httpupgrade" || transport["host"] != "v2.mokhtari94.ir" || transport["path"] != "/87IIO0MKecX3r8BQxdso" {
-		t.Fatalf("transport = %#v", outbound["transport"])
+	doc, _ := renderDoc(t, cfg)
+	us := doc.outbound("us_out")
+	if us["type"] != "selector" || us["default"] != "vp1" {
+		t.Fatalf("fallback group = %#v", us)
 	}
-	tls, ok := outbound["tls"].(map[string]any)
-	if !ok || tls["enabled"] != true || tls["insecure"] != true || tls["server_name"] != "v2.mokhtari94.ir" {
-		t.Fatalf("tls = %#v", outbound["tls"])
+	if inner := doc.outbound("inner"); inner["type"] != "urltest" || !reflect.DeepEqual(strings_(inner["outbounds"]), []string{"js", "sub1"}) {
+		t.Fatalf("inner = %#v", inner)
 	}
-	alpn, ok := tls["alpn"].([]any)
-	if !ok || len(alpn) != 1 || alpn[0] != "http/1.1" {
-		t.Fatalf("alpn = %#v", tls["alpn"])
+	if outer := doc.outbound("outer"); !reflect.DeepEqual(strings_(outer["outbounds"]), []string{"us_out"}) {
+		t.Fatalf("outer must drop the dead nested group: %#v", outer)
 	}
-	proxy := renderedOutbound(t, data, "proxy")
-	if proxy["type"] != "selector" || proxy["default"] != "vless_0b96da71_f27d0bbdc3" {
-		t.Fatalf("proxy selector = %#v", proxy)
+	if doc.outbound("dead") != nil {
+		t.Fatal("dead group rendered")
 	}
 }
 
-func TestRenderGroupStrategies(t *testing.T) {
-	for _, tc := range []struct {
-		strategy     string
-		outboundType string
+func TestFinalFallsBackToDirect(t *testing.T) {
+	isolate(t)
+	cfg := baseConfig()
+	cases := []struct {
+		final, mode, want string
 	}{
-		{strategy: "selector", outboundType: "selector"},
-		{strategy: "urltest", outboundType: "urltest"},
-		{strategy: "load-balance", outboundType: "urltest"},
-	} {
-		t.Run(tc.strategy, func(t *testing.T) {
-			cfg := managerconfig.DefaultConfig()
-			cfg.Manager.ActiveGroup = "home"
-			cfg.Groups["home"] = managerconfig.Group{
-				ID:            "home",
-				Enabled:       true,
-				Name:          "Home",
-				Strategy:      tc.strategy,
-				SelectedNode:  "node-b",
-				RouteFinal:    "proxy",
-				Subscriptions: []string{"sub-a"},
-			}
-			cfg.Nodes["node-a"] = managerconfig.Node{ID: "node-a", Enabled: true, Type: "direct", Tag: "node-a", Subscription: "sub-a"}
-			cfg.Nodes["node-b"] = managerconfig.Node{ID: "node-b", Enabled: true, Type: "direct", Tag: "node-b"}
-
-			data, err := Render(cfg)
-			if err != nil {
-				t.Fatalf("render: %v", err)
-			}
-			proxy := renderedOutbound(t, data, "proxy")
-			if proxy["type"] != tc.outboundType {
-				t.Fatalf("proxy type = %v, want %s\n%s", proxy["type"], tc.outboundType, data)
-			}
-			outbounds, ok := proxy["outbounds"].([]any)
-			if !ok || len(outbounds) < 2 {
-				t.Fatalf("proxy outbounds = %#v, want strategy pool", proxy["outbounds"])
-			}
-			if tc.strategy == "selector" && proxy["default"] != "node-b" {
-				t.Fatalf("selector default = %v, want node-b", proxy["default"])
-			}
-		})
+		{"vp1", "rule", "vp1"},
+		{"vp1", "global", "vp1"},
+		{"vp1", "direct", "direct"},
+		{"", "rule", "direct"},
+		{"ghost", "rule", "direct"},
+		{"block", "rule", "block"},
 	}
-}
-
-func TestRenderStrategySkipsUnsupportedTransportNodes(t *testing.T) {
-	cfg := managerconfig.DefaultConfig()
-	cfg.Manager.ActiveGroup = "home"
-	cfg.Groups["home"] = managerconfig.Group{
-		ID:            "home",
-		Enabled:       true,
-		Name:          "Home",
-		Strategy:      "urltest",
-		RouteFinal:    "proxy",
-		Subscriptions: []string{"sub-a"},
-	}
-	cfg.Nodes["node-a"] = managerconfig.Node{ID: "node-a", Enabled: true, Type: "vless", Server: "edge.example.com", Port: 443, UUID: "00000000-0000-0000-0000-000000000001", Transport: "xhttp", Subscription: "sub-a"}
-	cfg.Nodes["node-b"] = managerconfig.Node{ID: "node-b", Enabled: true, Type: "direct", Tag: "node-b", Subscription: "sub-a"}
-
-	data, err := Render(cfg)
-	if err != nil {
-		t.Fatalf("render: %v", err)
-	}
-	proxy := renderedOutbound(t, data, "proxy")
-	outbounds, ok := proxy["outbounds"].([]any)
-	if !ok || len(outbounds) != 1 || outbounds[0] != "node-b" {
-		t.Fatalf("proxy outbounds = %#v, want only supported node-b\n%s", proxy["outbounds"], data)
-	}
-}
-
-func TestRenderManualUnsupportedTransportFallsBackToDirect(t *testing.T) {
-	cfg := managerconfig.DefaultConfig()
-	cfg.Manager.ActiveGroup = "home"
-	cfg.Groups["home"] = managerconfig.Group{
-		ID:           "home",
-		Enabled:      true,
-		Name:         "Home",
-		Strategy:     "manual",
-		RouteFinal:   "proxy",
-		SelectedNode: "node-a",
-	}
-	cfg.Nodes["node-a"] = managerconfig.Node{ID: "node-a", Enabled: true, Type: "vless", Server: "edge.example.com", Port: 443, UUID: "00000000-0000-0000-0000-000000000001", Transport: "xhttp"}
-
-	// A selected node with a transport sing-box cannot render must not fail the
-	// whole render: that would block every reload (including firewall changes).
-	// It falls back to a direct selector instead.
-	data, err := Render(cfg)
-	if err != nil {
-		t.Fatalf("render: %v", err)
-	}
-	if strings.Contains(string(data), "xhttp") {
-		t.Fatalf("rendered config still references the unsupported node:\n%s", data)
-	}
-
-	var document struct {
-		Outbounds []map[string]any `json:"outbounds"`
-	}
-	if err := json.Unmarshal(data, &document); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	var proxy map[string]any
-	for _, outbound := range document.Outbounds {
-		if outbound["tag"] == "proxy" {
-			proxy = outbound
-			break
+	for _, tc := range cases {
+		cfg.Manager.Final, cfg.Manager.RuntimeMode = tc.final, tc.mode
+		if doc, _ := renderDoc(t, cfg); doc.Route.Final != tc.want {
+			t.Errorf("final=%q mode=%q → %q, want %q", tc.final, tc.mode, doc.Route.Final, tc.want)
 		}
 	}
-	if proxy == nil {
-		t.Fatalf("no proxy outbound rendered:\n%s", data)
+}
+
+func TestRenderRoutes(t *testing.T) {
+	isolate(t)
+	cfg := baseConfig()
+	cfg.Manager.Final = "vp1"
+	cfg.RuleGroups["tg"] = managerconfig.RuleGroup{ID: "tg", Enabled: true, Rules: []string{
+		"domain_suffix:telegram.org", "domain_suffix:t.me", "ip_cidr:91.108.4.0/22", "ip_cidr:149.154.167.50",
+		"port:443", "remote:https://example.com/geoip-telegram.srs", "ip_is_private:false",
+	}}
+	cfg.RuleGroups["ru"] = managerconfig.RuleGroup{ID: "ru", Enabled: true, Rules: []string{"domain_suffix:ru", "domain_suffix:su"}}
+	cfg.RuleGroups["off"] = managerconfig.RuleGroup{ID: "off", Enabled: false, Rules: []string{"domain:x.com"}}
+	set := managerconfig.RemoteRuleSet("https://example.com/geoip-telegram.srs")
+	if err := os.WriteFile(set.Path, []byte("srs"), 0644); err != nil {
+		t.Fatal(err)
 	}
-	if proxy["type"] != "selector" || proxy["default"] != "direct" {
-		t.Fatalf("proxy outbound = %v, want direct selector fallback", proxy)
+	cfg.Routes = []managerconfig.Route{
+		{ID: "route_1", Enabled: true, RuleGroup: "ru", Outbound: "direct"},
+		{ID: "route_2", Enabled: true, RuleGroup: "tg", Outbound: "js"},
+		{ID: "route_3", Enabled: true, RuleGroup: "ru", Outbound: "ghost_group"},
+		{ID: "route_4", Enabled: false, RuleGroup: "tg", Outbound: "block"},
+		{ID: "route_5", Enabled: true, RuleGroup: "off", Outbound: "block"},
+		{ID: "route_6", Enabled: true, RuleGroup: "tg", Outbound: "block"},
+	}
+	doc, data := renderDoc(t, cfg)
+	rules := doc.Route.Rules
+	if len(rules) != 4 || rules[0]["action"] != "sniff" {
+		t.Fatalf("want sniff + 3 routes, got:\n%s", data)
+	}
+	ru := rules[1]
+	if ru["outbound"] != "direct" || !reflect.DeepEqual(strings_(ru["domain_suffix"]), []string{"ru", "su"}) || ru["type"] != nil {
+		t.Fatalf("single-type rule must not be wrapped: %#v", ru)
+	}
+	tg := rules[2]
+	if tg["type"] != "logical" || tg["mode"] != "or" || tg["outbound"] != "js" {
+		t.Fatalf("multi-type rule must be logical or: %#v", tg)
+	}
+	sub := tg["rules"].([]any)
+	if len(sub) != 5 {
+		t.Fatalf("sub-rules = %#v", sub)
+	}
+	cidrs := strings_(sub[1].(map[string]any)["ip_cidr"])
+	if !reflect.DeepEqual(cidrs, []string{"91.108.4.0/22", "149.154.167.50/32"}) {
+		t.Fatalf("ip_cidr = %v", cidrs)
+	}
+	if ports := sub[2].(map[string]any)["port"].([]any); ports[0] != float64(443) {
+		t.Fatalf("port must render as a number: %#v", ports)
+	}
+	if rs := strings_(sub[3].(map[string]any)["rule_set"]); !reflect.DeepEqual(rs, []string{set.ID}) {
+		t.Fatalf("rule_set = %v", rs)
+	}
+	if sub[4].(map[string]any)["ip_is_private"] != false {
+		t.Fatalf("ip_is_private = %#v", sub[4])
+	}
+	if rules[3]["outbound"] != "block" {
+		t.Fatalf("order must be preserved: %#v", rules[3])
+	}
+	if len(doc.Route.RuleSet) != 1 || doc.Route.RuleSet[0]["tag"] != set.ID || doc.Route.RuleSet[0]["type"] != "local" ||
+		doc.Route.RuleSet[0]["path"] != set.Path || doc.Route.RuleSet[0]["format"] != "binary" {
+		t.Fatalf("rule_set = %#v", doc.Route.RuleSet)
+	}
+
+	cfg.Manager.RuntimeMode = "global"
+	if doc, _ := renderDoc(t, cfg); len(doc.Route.Rules) != 1 {
+		t.Fatalf("global mode must render no routes: %#v", doc.Route.Rules)
 	}
 }
 
-func TestRenderRemoteRuleSetOmitsCachePath(t *testing.T) {
-	cfg := managerconfig.DefaultConfig()
-	cfg.Manager.ActiveGroup = "home"
-	cfg.Manager.RuntimeMode = "rule"
-	cfg.Groups["home"] = managerconfig.Group{
-		ID: "home", Enabled: true, Name: "Home", Strategy: "manual", RouteFinal: "proxy",
-	}
-	cfg.RuleSets["geoip-ir"] = managerconfig.RuleSet{
-		ID: "geoip-ir", Enabled: true, Name: "GeoIP Iran", Type: "remote", Format: "binary",
-		URL: "https://example.com/geoip-ir.srs", UpdateInterval: "24h",
-	}
-	cfg.RouteRules["r1"] = managerconfig.RouteRule{
-		ID: "r1", Enabled: true, Name: "Iran direct", Group: "home",
-		RuleSets: []string{"geoip-ir"}, Outbound: "direct",
-	}
-
-	data, err := Render(cfg)
-	if err != nil {
-		t.Fatalf("render: %v", err)
-	}
-	var document struct {
-		Route routeConfig `json:"route"`
-	}
-	if err := json.Unmarshal(data, &document); err != nil {
-		t.Fatalf("unmarshal rendered config: %v", err)
-	}
-	if len(document.Route.RuleSet) != 1 {
-		t.Fatalf("rule sets = %d, want 1\n%s", len(document.Route.RuleSet), data)
-	}
-	entry := document.Route.RuleSet[0]
-	if entry["type"] != "remote" || entry["url"] == "" {
-		t.Fatalf("remote rule set = %#v", entry)
-	}
-	if _, ok := entry["path"]; ok {
-		t.Fatalf("remote rule set leaked cache path: %#v", entry)
-	}
-	if entry["download_detour"] != "proxy" {
-		t.Fatalf("remote rule set download detour = %#v, want proxy", entry["download_detour"])
+func TestRenderSkipsUncachedRemoteRuleSet(t *testing.T) {
+	isolate(t)
+	cfg := baseConfig()
+	cfg.RuleGroups["tg"] = managerconfig.RuleGroup{ID: "tg", Enabled: true, Rules: []string{"domain_suffix:t.me", "remote:https://e.com/x.json"}}
+	cfg.Routes = []managerconfig.Route{{ID: "route_1", Enabled: true, RuleGroup: "tg", Outbound: "block"}}
+	doc, data := renderDoc(t, cfg)
+	if len(doc.Route.RuleSet) != 0 || doc.Route.Rules[1]["domain_suffix"] == nil || doc.Route.Rules[1]["type"] != nil {
+		t.Fatalf("uncached remote set must be left out (sing-box would fail to start):\n%s", data)
 	}
 }
 
-func TestRenderRemoteRuleSetUsesExistingCachePath(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "geoip-ir.srs")
-	if err := os.WriteFile(path, []byte("cache"), 0644); err != nil {
-		t.Fatalf("write cache: %v", err)
+func TestRenderDevicePinRoute(t *testing.T) {
+	isolate(t)
+	cfg := baseConfig()
+	cfg.Transparent.Devices = []managerconfig.Device{
+		{ID: "tv", Enabled: true, IPv4: "192.168.1.5", IPv6: "fd00::5", Group: "js"},
+		{ID: "off", Enabled: false, IPv4: "192.168.1.6", Group: "js"},
+		{ID: "ghost", Enabled: true, IPv4: "192.168.1.7", Group: "nowhere"},
 	}
-	cfg := managerconfig.DefaultConfig()
-	cfg.Manager.ActiveGroup = "home"
-	cfg.Manager.RuntimeMode = "rule"
-	cfg.Groups["home"] = managerconfig.Group{
-		ID: "home", Enabled: true, Name: "Home", Strategy: "manual", RouteFinal: "proxy",
+	doc, _ := renderDoc(t, cfg)
+	if len(doc.Route.Rules) != 2 {
+		t.Fatalf("rules = %#v", doc.Route.Rules)
 	}
-	cfg.RuleSets["geoip-ir"] = managerconfig.RuleSet{
-		ID: "geoip-ir", Enabled: true, Name: "GeoIP Iran", Type: "remote", Format: "binary",
-		URL: "https://example.com/geoip-ir.srs", Path: path,
-	}
-	cfg.RouteRules["r1"] = managerconfig.RouteRule{
-		ID: "r1", Enabled: true, Name: "Iran direct", Group: "home",
-		RuleSets: []string{"geoip-ir"}, Outbound: "direct",
-	}
-
-	data, err := Render(cfg)
-	if err != nil {
-		t.Fatalf("render: %v", err)
-	}
-	var document struct {
-		Route routeConfig `json:"route"`
-	}
-	if err := json.Unmarshal(data, &document); err != nil {
-		t.Fatalf("unmarshal rendered config: %v", err)
-	}
-	entry := document.Route.RuleSet[0]
-	if entry["type"] != "local" || entry["path"] != path {
-		t.Fatalf("cached rule set = %#v, want local path %s", entry, path)
-	}
-	if _, ok := entry["url"]; ok {
-		t.Fatalf("cached rule set should not include remote url: %#v", entry)
+	pin := doc.Route.Rules[1]
+	if pin["outbound"] != "js" || !reflect.DeepEqual(strings_(pin["source_ip_cidr"]), []string{"192.168.1.5/32", "fd00::5/128"}) {
+		t.Fatalf("pin = %#v", pin)
 	}
 }
 
-// Outbound server hostnames (and route.default_domain_resolver) must bootstrap
-// through a proxy-free resolver, never the proxy-detoured one — otherwise
-// resolving the proxy nodes' own servers loops through the proxy. The group's
-// dns_final still points at the proxy resolver for actual client queries.
-func TestRenderDomainResolverBootstrapsDirectly(t *testing.T) {
-	cfg := managerconfig.DefaultConfig()
-	cfg.Manager.ActiveGroup = "home"
-	cfg.Groups["home"] = managerconfig.Group{
-		ID: "home", Enabled: true, Name: "Home", Strategy: "manual", RouteFinal: "proxy", DNSFinal: "remote_doh",
-	}
-	cfg.DNSServers["local_udp"] = managerconfig.DNSServer{
-		ID: "local_udp", Enabled: true, Type: "udp", Address: "223.5.5.5", Detour: "direct",
-	}
-	cfg.DNSServers["remote_doh"] = managerconfig.DNSServer{
-		ID: "remote_doh", Enabled: true, Type: "doh", Address: "https://1.1.1.1/dns-query", Detour: "proxy",
-	}
+func TestRenderDNS(t *testing.T) {
+	isolate(t)
+	cfg := baseConfig()
+	cfg.Manager.Final = "vp1"
+	cfg.Manager.DNSFinal = "remote_doh"
+	cfg.DNSServers["local_udp"] = managerconfig.DNSServer{ID: "local_udp", Enabled: true, Type: "udp", Address: "223.5.5.5", Detour: "direct"}
+	cfg.DNSServers["remote_doh"] = managerconfig.DNSServer{ID: "remote_doh", Enabled: true, Type: "doh", Address: "https://1.1.1.1/dns-query", Detour: "proxy"}
+	cfg.DNSServers["via_js"] = managerconfig.DNSServer{ID: "via_js", Enabled: true, Type: "tls", Address: "8.8.8.8", Detour: "js"}
+	cfg.DNSServers["via_ghost"] = managerconfig.DNSServer{ID: "via_ghost", Enabled: true, Type: "udp", Address: "9.9.9.9", Detour: "ghost"}
+	cfg.RuleGroups["ru"] = managerconfig.RuleGroup{ID: "ru", Enabled: true, Rules: []string{"domain_suffix:ru"}}
+	cfg.DNSRules["a_ru"] = managerconfig.DNSRule{ID: "a_ru", Enabled: true, RuleGroups: []string{"ru"}, Server: "local_udp"}
+	cfg.DNSRules["b_dev"] = managerconfig.DNSRule{ID: "b_dev", Enabled: true, Sources: []string{"192.168.1.20"}, RuleGroups: []string{"ru"}, Server: "via_js"}
 
-	data, err := Render(cfg)
-	if err != nil {
-		t.Fatalf("render: %v", err)
+	doc, data := renderDoc(t, cfg)
+	servers := map[string]map[string]any{}
+	for _, server := range doc.DNS.Servers {
+		servers[server["tag"].(string)] = server
 	}
-	var document struct {
-		Route routeConfig `json:"route"`
-		DNS   dnsConfig   `json:"dns"`
+	if servers["remote_doh"]["detour"] != "vp1" {
+		t.Fatalf(`detour "proxy" must resolve to final: %#v`, servers["remote_doh"])
 	}
-	if err := json.Unmarshal(data, &document); err != nil {
-		t.Fatalf("unmarshal rendered config: %v", err)
+	if servers["via_js"]["detour"] != "js" {
+		t.Fatalf("explicit detour: %#v", servers["via_js"])
 	}
-	if document.Route.DefaultDomainResolver != "local_udp" {
-		t.Fatalf("default domain resolver = %q, want local_udp (proxy-free bootstrap)", document.Route.DefaultDomainResolver)
+	for _, tag := range []string{"local_udp", "via_ghost"} {
+		if _, has := servers[tag]["detour"]; has {
+			t.Fatalf("%s: direct/unrendered detour must be omitted: %#v", tag, servers[tag])
+		}
 	}
-	if document.DNS.Final != "remote_doh" {
-		t.Fatalf("dns final = %q, want remote_doh (client queries keep the proxy resolver)", document.DNS.Final)
+	if doc.DNS.Final != "remote_doh" {
+		t.Fatalf("dns final = %q", doc.DNS.Final)
 	}
-	direct := renderedOutbound(t, data, "direct")
-	if direct["domain_resolver"] != "local_udp" {
-		t.Fatalf("direct domain resolver = %#v, want local_udp", direct["domain_resolver"])
+	if len(doc.DNS.Rules) != 2 || doc.DNS.Rules[0]["server"] != "local_udp" || doc.DNS.Rules[0]["domain_suffix"] == nil || doc.DNS.Rules[0]["outbound"] != nil {
+		t.Fatalf("dns rules:\n%s", data)
+	}
+	if and := doc.DNS.Rules[1]; and["type"] != "logical" || and["mode"] != "and" || and["server"] != "via_js" {
+		t.Fatalf("source+group dns rule must AND: %#v", and)
+	}
+	if doc.Route.DefaultDomainResolver != "local_udp" || doc.outbound("vp1")["domain_resolver"] != "local_udp" {
+		t.Fatalf("proxy hostnames must bootstrap through the direct resolver:\n%s", data)
+	}
+	if doc.outbound("direct")["domain_resolver"] != nil {
+		t.Fatal("the built-in direct outbound relies on route.default_domain_resolver")
 	}
 }
 
-// A proxy node whose server is a hostname must resolve that hostname through a
-// proxy-free resolver, or the connection to the node could never bootstrap.
-func TestRenderProxyNodeResolvesServerWithoutLoop(t *testing.T) {
-	cfg := managerconfig.DefaultConfig()
-	cfg.Manager.ActiveGroup = "home"
-	cfg.Groups["home"] = managerconfig.Group{
-		ID: "home", Enabled: true, Name: "Home", Strategy: "manual", SelectedNode: "n1", RouteFinal: "proxy", DNSFinal: "remote_doh",
-	}
-	cfg.Nodes["n1"] = managerconfig.Node{
-		ID: "n1", Enabled: true, Type: "trojan", Tag: "n1", Server: "relay.example.com", Port: 443, Password: "x", TLS: true,
-	}
-	cfg.DNSServers["local_udp"] = managerconfig.DNSServer{
-		ID: "local_udp", Enabled: true, Type: "udp", Address: "223.5.5.5", Detour: "direct",
-	}
-	cfg.DNSServers["remote_doh"] = managerconfig.DNSServer{
-		ID: "remote_doh", Enabled: true, Type: "doh", Address: "https://1.1.1.1/dns-query", Detour: "proxy",
-	}
-
-	data, err := Render(cfg)
-	if err != nil {
-		t.Fatalf("render: %v", err)
-	}
-	node := renderedOutbound(t, data, "n1")
-	if node["domain_resolver"] != "local_udp" {
-		t.Fatalf("node domain_resolver = %#v, want local_udp (must not loop through the proxy)", node["domain_resolver"])
-	}
-}
-
-// When the config defines no proxy-free resolver, the renderer injects a local
-// one so outbound hostnames can still bootstrap instead of looping.
 func TestRenderInjectsLocalBootstrapWhenNoDirectResolver(t *testing.T) {
-	cfg := managerconfig.DefaultConfig()
-	cfg.Manager.ActiveGroup = "home"
-	cfg.Groups["home"] = managerconfig.Group{
-		ID: "home", Enabled: true, Name: "Home", Strategy: "manual", RouteFinal: "proxy", DNSFinal: "remote_doh",
+	isolate(t)
+	cfg := baseConfig()
+	cfg.DNSServers["remote_doh"] = managerconfig.DNSServer{ID: "remote_doh", Enabled: true, Type: "doh", Address: "https://1.1.1.1/dns-query", Detour: "proxy"}
+	doc, data := renderDoc(t, cfg)
+	if doc.Route.DefaultDomainResolver != syntheticBootstrapTag {
+		t.Fatalf("default domain resolver = %q", doc.Route.DefaultDomainResolver)
 	}
-	cfg.DNSServers["remote_doh"] = managerconfig.DNSServer{
-		ID: "remote_doh", Enabled: true, Type: "doh", Address: "https://1.1.1.1/dns-query", Detour: "proxy",
-	}
-
-	data, err := Render(cfg)
-	if err != nil {
-		t.Fatalf("render: %v", err)
-	}
-	var document struct {
-		Route routeConfig `json:"route"`
-		DNS   dnsConfig   `json:"dns"`
-	}
-	if err := json.Unmarshal(data, &document); err != nil {
-		t.Fatalf("unmarshal rendered config: %v", err)
-	}
-	if document.Route.DefaultDomainResolver != "domain-bootstrap" {
-		t.Fatalf("default domain resolver = %q, want domain-bootstrap", document.Route.DefaultDomainResolver)
-	}
-	var bootstrap map[string]any
-	for _, server := range document.DNS.Servers {
-		if server["tag"] == "domain-bootstrap" {
-			bootstrap = server
+	found := false
+	for _, server := range doc.DNS.Servers {
+		if server["tag"] == syntheticBootstrapTag && server["type"] == "local" {
+			found = true
 		}
 	}
-	if bootstrap == nil {
-		t.Fatalf("expected synthetic local bootstrap server:\n%s", data)
-	}
-	if bootstrap["type"] != "local" {
-		t.Fatalf("bootstrap server type = %#v, want local", bootstrap["type"])
+	if !found {
+		t.Fatalf("missing local bootstrap:\n%s", data)
 	}
 }
 
-// DNS hijack renders a dns-in direct inbound on dns_port (the firewall
-// nat-redirects router-bound DNS there, since tproxy can't steal it from
-// dnsmasq's local socket) plus hijack-dns route rules for that inbound and for
-// DNS sniffed on the tproxy inbound.
-func TestRenderDNSHijackInboundAndRoute(t *testing.T) {
-	cfg := managerconfig.DefaultConfig()
-	cfg.Manager.ActiveGroup = "home"
+func TestRenderInboundsHaveNoLegacySniff(t *testing.T) {
+	isolate(t)
+	cfg := baseConfig()
 	cfg.Transparent.DefaultMode = "tproxy"
 	cfg.Transparent.LANIfnames = []string{"br-lan"}
 	cfg.Transparent.DNSHijack = true
-	cfg.Groups["home"] = managerconfig.Group{
-		ID: "home", Enabled: true, Name: "Home", Strategy: "manual", RouteFinal: "proxy",
-	}
-	cfg.DNSServers["local_udp"] = managerconfig.DNSServer{
-		ID: "local_udp", Enabled: true, Type: "udp", Address: "223.5.5.5",
-	}
+	cfg.DNSServers["local_udp"] = managerconfig.DNSServer{ID: "local_udp", Enabled: true, Type: "udp", Address: "223.5.5.5"}
 
-	data, err := Render(cfg)
-	if err != nil {
-		t.Fatalf("render: %v", err)
-	}
-	var document struct {
-		Inbounds []map[string]any `json:"inbounds"`
-		Route    struct {
-			Rules []map[string]any `json:"rules"`
-		} `json:"route"`
-	}
-	if err := json.Unmarshal(data, &document); err != nil {
-		t.Fatalf("decode: %v", err)
+	doc, data := renderDoc(t, cfg)
+	if strings.Contains(string(data), `"sniff": true`) {
+		t.Fatalf("sing-box 1.13 rejects inbound sniff fields:\n%s", data)
 	}
 	var dnsIn map[string]any
-	for _, inbound := range document.Inbounds {
+	for _, inbound := range doc.Inbounds {
 		if inbound["tag"] == "dns-in" {
 			dnsIn = inbound
 		}
 	}
 	if dnsIn == nil || dnsIn["type"] != "direct" || dnsIn["listen_port"] != float64(cfg.Manager.DNSPort) {
-		t.Fatalf("missing dns-in direct inbound on dns_port %d:\n%s", cfg.Manager.DNSPort, data)
+		t.Fatalf("missing dns-in inbound:\n%s", data)
 	}
-	if len(document.Route.Rules) < 2 ||
-		document.Route.Rules[0]["action"] != "hijack-dns" || document.Route.Rules[0]["inbound"] == nil ||
-		document.Route.Rules[1]["action"] != "hijack-dns" || document.Route.Rules[1]["protocol"] != "dns" {
-		t.Fatalf("expected leading hijack-dns rules for dns-in and protocol dns:\n%s", data)
+	rules := doc.Route.Rules
+	if len(rules) < 3 || rules[0]["action"] != "sniff" || rules[1]["action"] != "hijack-dns" || rules[1]["inbound"] == nil ||
+		rules[2]["action"] != "hijack-dns" || rules[2]["protocol"] != "dns" {
+		t.Fatalf("want sniff then hijack-dns rules:\n%s", data)
 	}
 
 	cfg.Transparent.DNSHijack = false
-	data, err = Render(cfg)
-	if err != nil {
-		t.Fatalf("render: %v", err)
-	}
-	if strings.Contains(string(data), `"dns-in"`) || strings.Contains(string(data), "hijack-dns") {
+	if _, data := renderDoc(t, cfg); strings.Contains(string(data), `"dns-in"`) || strings.Contains(string(data), "hijack-dns") {
 		t.Fatalf("hijack disabled but DNS capture still rendered:\n%s", data)
 	}
 }
 
 func TestRenderTUNInbound(t *testing.T) {
-	cfg := managerconfig.DefaultConfig()
-	cfg.Manager.ActiveGroup = "home"
-	cfg.Groups["home"] = managerconfig.Group{
-		ID: "home", Enabled: true, Name: "Home", Strategy: "manual", RouteFinal: "proxy",
-	}
+	isolate(t)
+	cfg := baseConfig()
 	cfg.TUN.Enabled = true
-	cfg.TUN.AutoRoute = true
 	cfg.TUN.AutoRedirect = false
-	cfg.TUN.Inet4Address = "172.19.0.1/30"
-	cfg.TUN.Inet6Address = "fdfe:dcba:9876::1/126"
-
-	data, err := Render(cfg)
-	if err != nil {
-		t.Fatalf("render: %v", err)
-	}
-	for _, want := range []string{
-		`"type": "tun"`,
-		`"interface_name": "singbox0"`,
-		`"address": [`,
-		`"172.19.0.1/30"`,
-		`"fdfe:dcba:9876::1/126"`,
-		`"auto_route": true`,
-		`"auto_redirect": false`,
-	} {
+	_, data := renderDoc(t, cfg)
+	for _, want := range []string{`"type": "tun"`, `"interface_name": "singbox0"`, `"172.19.0.1/30"`, `"fdfe:dcba:9876::1/126"`, `"auto_route": true`, `"auto_redirect": false`} {
 		if !strings.Contains(string(data), want) {
-			t.Fatalf("rendered config missing %q:\n%s", want, data)
+			t.Fatalf("missing %q:\n%s", want, data)
 		}
 	}
 }
 
-func TestRenderSupportsAllNodeTypes(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		node managerconfig.Node
-	}{
-		{
-			name: "hysteria2",
-			node: managerconfig.Node{
-				ID: "hy2", Enabled: true, Type: "hysteria2", Server: "hy.example.com",
-				Port: 443, Password: "secret", TLS: true, SNI: "hy.example.com",
-			},
-		},
-		{
-			name: "tuic",
-			node: managerconfig.Node{
-				ID: "tuic", Enabled: true, Type: "tuic", Server: "tuic.example.com",
-				Port: 443, UUID: "00000000-0000-0000-0000-000000000001", Password: "secret",
-				TLS: true, Congestion: "bbr", UDPRelayMode: "native",
-			},
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			cfg := managerconfig.DefaultConfig()
-			cfg.Manager.ActiveGroup = "home"
-			cfg.Groups["home"] = managerconfig.Group{
-				ID: "home", Enabled: true, Name: "Home", Strategy: "manual", RouteFinal: "proxy",
-				SelectedNode: tc.node.ID,
-			}
-			cfg.Nodes[tc.node.ID] = tc.node
+func TestRenderClashAPI(t *testing.T) {
+	isolate(t)
+	cfg := baseConfig()
+	doc, _ := renderDoc(t, cfg)
+	api, _ := doc.Experimental["clash_api"].(map[string]any)
+	if api["external_controller"] != "127.0.0.1:9090" {
+		t.Fatalf("clash_api = %#v", doc.Experimental)
+	}
+	cfg.Manager.APIListen = ""
+	if doc, _ := renderDoc(t, cfg); doc.Experimental["clash_api"] != nil {
+		t.Fatal("empty api_listen must disable the clash API")
+	}
+}
 
-			data, err := Render(cfg)
-			if err != nil {
-				t.Fatalf("render: %v", err)
-			}
-			if !strings.Contains(string(data), `"type": "`+tc.node.Type+`"`) {
-				t.Fatalf("rendered config missing %s outbound:\n%s", tc.node.Type, data)
-			}
-		})
+func TestBuildProbeConfig(t *testing.T) {
+	data, err := BuildProbeConfig(map[string]map[string]any{
+		"b": {"type": "trojan", "tag": "wrong", "server": "b"},
+		"a": {"type": "trojan", "server": "a"},
+	}, ProbeAPI{Listen: "127.0.0.1:1234", Secret: "s"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc document
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	var tags []string
+	for _, ob := range doc.Outbounds {
+		tags = append(tags, ob["tag"].(string))
+	}
+	if !reflect.DeepEqual(tags, []string{"direct", "a", "b"}) {
+		t.Fatalf("tags = %v (sorted, tag forced to key)", tags)
+	}
+	api := doc.Experimental["clash_api"].(map[string]any)
+	if api["external_controller"] != "127.0.0.1:1234" || api["secret"] != "s" {
+		t.Fatalf("api = %#v", api)
 	}
 }
 
 func TestRenderPackageDefaultConfig(t *testing.T) {
+	isolate(t)
 	cfg, err := managerconfig.Load(filepath.Clean("../../../files/etc/config/singbox-manager"))
 	if err != nil {
 		t.Fatalf("load package default config: %v", err)
 	}
-	data, err := Render(*cfg)
-	if err != nil {
-		t.Fatalf("render package default config: %v", err)
-	}
-	var document struct {
-		Outbounds []map[string]any `json:"outbounds"`
-		Route     routeConfig      `json:"route"`
-	}
-	if err := json.Unmarshal(data, &document); err != nil {
-		t.Fatalf("rendered default config is not valid JSON: %v\n%s", err, data)
-	}
-	renderedOutbound(t, data, "proxy")
-	if len(document.Route.RuleSet) == 0 {
-		t.Fatalf("expected the default config to render rule sets:\n%s", data)
-	}
-}
-
-func renderedOutbound(t *testing.T, data []byte, tag string) map[string]any {
-	t.Helper()
-	var document struct {
-		Outbounds []map[string]any `json:"outbounds"`
-	}
-	if err := json.Unmarshal(data, &document); err != nil {
-		t.Fatalf("unmarshal rendered config: %v", err)
-	}
-	for _, outbound := range document.Outbounds {
-		if outbound["tag"] == tag {
-			return outbound
-		}
-	}
-	t.Fatalf("outbound %q not found in %s", tag, data)
-	return nil
-}
-
-func TestRenderHTTPTransport(t *testing.T) {
-	node := managerconfig.Node{
-		ID: "n", Type: "vless", Server: "1.2.3.4", Port: 443, UUID: "u",
-		TLS: true, Transport: "http", Host: "h.example", Path: "/p",
-	}
-	out, err := renderNodeOutbound(node)
-	if err != nil {
-		t.Fatalf("render http transport: %v", err)
-	}
-	transport, ok := out["transport"].(map[string]any)
-	if !ok || transport["type"] != "http" || transport["path"] != "/p" {
-		t.Fatalf("transport = %#v", out["transport"])
-	}
-}
-
-func TestRenderXHTTPTransportUnsupported(t *testing.T) {
-	node := managerconfig.Node{
-		ID: "vless_5c3b4e91_e3e8460f7f", Type: "vless", Server: "1.2.3.4",
-		Port: 443, UUID: "u", TLS: true, Transport: "xhttp",
-	}
-	_, err := renderNodeOutbound(node)
-	if err == nil {
-		t.Fatal("expected error for unsupported xhttp transport")
-	}
-	if !strings.Contains(err.Error(), "xhttp") || !strings.Contains(err.Error(), "not supported") {
-		t.Fatalf("error = %q, want a clear xhttp-not-supported message", err)
+	if doc, data := renderDoc(t, *cfg); doc.Route.Final == "" || len(doc.Outbounds) < 2 {
+		t.Fatalf("default config rendered oddly:\n%s", data)
 	}
 }

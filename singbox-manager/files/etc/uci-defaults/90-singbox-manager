@@ -2,6 +2,7 @@
 
 mkdir -p /etc/singbox-manager/generated
 mkdir -p /etc/singbox-manager/rulesets
+mkdir -p /etc/singbox-manager/state
 mkdir -p /var/run/singbox-manager
 mkdir -p /var/run/sing-box
 

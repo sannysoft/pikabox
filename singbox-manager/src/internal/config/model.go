@@ -1,28 +1,30 @@
 package config
 
+import "sort"
+
 const (
 	DefaultSocketPath    = "/var/run/singbox-manager/singbox-managerd.sock"
 	DefaultSingBoxBinary = "/usr/bin/sing-box"
 )
 
 type Config struct {
-	Manager       Manager
-	Groups        map[string]Group
-	Subscriptions map[string]Subscription
-	Nodes         map[string]Node
-	DNSServers    map[string]DNSServer
-	DNSRules      map[string]DNSRule
-	RouteRules    map[string]RouteRule
-	RuleSets      map[string]RuleSet
-	Transparent   Transparent
-	TUN           TUN
+	Manager        Manager
+	Outbounds      map[string]Outbound
+	Subscriptions  map[string]Subscription
+	OutboundGroups map[string]OutboundGroup
+	RuleGroups     map[string]RuleGroup
+	// Routes is ordered: first match wins, exactly as written in UCI.
+	Routes      []Route
+	DNSServers  map[string]DNSServer
+	DNSRules    map[string]DNSRule
+	Transparent Transparent
+	TUN         TUN
 }
 
 type Manager struct {
 	Enabled        bool
 	Paused         bool
 	LogLevel       string
-	ActiveGroup    string
 	RuntimeMode    string
 	SingBoxBinary  string
 	SocketPath     string
@@ -32,6 +34,16 @@ type Manager struct {
 	TProxyPort     int
 	DNSPort        int
 	UpdateInterval string
+	// Final is the route.final target: an outbound group, an outbound, or
+	// direct/block. Empty means direct.
+	Final string
+	// DNSFinal is the DNS server used when no DNS rule matches.
+	DNSFinal string
+	// ProbeInterval is how often outbounds and subscription candidates are
+	// delay-tested (and subscription top-N re-selected).
+	ProbeInterval string
+	// TestURL is fetched through each outbound by every delay test.
+	TestURL string
 }
 
 // Active reports whether the manager should keep sing-box and its firewall rules
@@ -43,37 +55,65 @@ func (m Manager) Active() bool {
 	return m.Enabled && !m.Paused
 }
 
-// Group bundles a set of subscriptions, a proxy selection strategy, and the
-// routing/DNS defaults that apply while the group is active. Routing and DNS
-// rules reference a group by ID; there is no longer a separate profile layer.
-type Group struct {
-	ID            string   `json:"id"`
-	Enabled       bool     `json:"enabled"`
-	Name          string   `json:"name"`
-	Subscriptions []string `json:"subscriptions"`
-	Strategy      string   `json:"strategy"`
-	SelectedNode  string   `json:"selected_node"`
-	RouteFinal    string   `json:"route_final"`
-	DNSFinal      string   `json:"dns_final"`
-	Health        string   `json:"health"`
-	LatencyMS     int      `json:"latency_ms"`
-	LastCheck     string   `json:"last_check"`
+// Outbound is a single user-defined proxy. Source is either a share URI
+// (vless://, trojan://, ss://, ...) or a sing-box outbound JSON object.
+type Outbound struct {
+	ID      string `json:"id"`
+	Enabled bool   `json:"enabled"`
+	Name    string `json:"name"`
+	Source  string `json:"source"`
 }
 
+// Subscription is a remote list of outbounds. Every fetched outbound is run
+// through Filter (an expr expression, empty = keep all), the survivors are
+// delay-tested, and the Count fastest alive ones are used wherever the
+// subscription is referenced (0 = all alive).
 type Subscription struct {
 	ID             string `json:"id"`
 	Enabled        bool   `json:"enabled"`
 	Name           string `json:"name"`
 	URL            string `json:"url"`
 	Format         string `json:"format"`
+	Filter         string `json:"filter"`
+	Count          int    `json:"count"`
 	UpdateInterval string `json:"update_interval"`
 	LastUpdate     string `json:"last_update"`
 	LastError      string `json:"last_error"`
-	Health         string `json:"health"`
-	LatencyMS      int    `json:"latency_ms"`
-	LastCheck      string `json:"last_check"`
 }
 
+// OutboundGroup is a named, ordered set of members. A member is the ID of an
+// outbound, a subscription (expanding to its selected outbounds, fastest
+// first), or another outbound group. Mode "urltest" uses the fastest member;
+// "fallback" uses the first alive member in the written order.
+type OutboundGroup struct {
+	ID      string   `json:"id"`
+	Enabled bool     `json:"enabled"`
+	Name    string   `json:"name"`
+	Mode    string   `json:"mode"`
+	Members []string `json:"members"`
+}
+
+// RuleGroup is a named set of match rules, ORed together. Each rule is
+// "<type>:<value>", where type is a sing-box route rule field (domain,
+// domain_suffix, ip_cidr, port, ...) or "remote" for a rule-set URL.
+type RuleGroup struct {
+	ID      string   `json:"id"`
+	Enabled bool     `json:"enabled"`
+	Name    string   `json:"name"`
+	Rules   []string `json:"rules"`
+}
+
+// Route sends traffic matching a rule group to an outbound target (outbound
+// group, outbound, direct, or block).
+type Route struct {
+	ID        string `json:"id"`
+	Enabled   bool   `json:"enabled"`
+	RuleGroup string `json:"rule_group"`
+	Outbound  string `json:"outbound"`
+}
+
+// Node is the structured form of a share URI. It is a parse intermediate:
+// subscriptions and outbounds convert it to sing-box outbound JSON at once.
 type Node struct {
 	ID        string `json:"id"`
 	Enabled   bool   `json:"enabled"`
@@ -102,10 +142,6 @@ type Node struct {
 	Congestion       string `json:"congestion"`
 	UDPRelayMode     string `json:"udp_relay_mode"`
 	Tag              string `json:"tag"`
-	Subscription     string `json:"subscription"`
-	Health           string `json:"health"`
-	LatencyMS        int    `json:"latency_ms"`
-	LastCheck        string `json:"last_check"`
 }
 
 // DNSServer is an upstream resolver definition shared across groups.
@@ -121,39 +157,21 @@ type DNSServer struct {
 // DNSRule selects a DNS server for traffic that matches a set of source IPs
 // and/or rule sets. It renders to a sing-box dns.rules entry.
 type DNSRule struct {
-	ID       string   `json:"id"`
-	Enabled  bool     `json:"enabled"`
-	Name     string   `json:"name"`
-	Group    string   `json:"group"`
-	Sources  []string `json:"sources"`
-	RuleSets []string `json:"rulesets"`
-	Server   string   `json:"server"`
+	ID         string   `json:"id"`
+	Enabled    bool     `json:"enabled"`
+	Name       string   `json:"name"`
+	Sources    []string `json:"sources"`
+	RuleGroups []string `json:"rule_groups"`
+	Server     string   `json:"server"`
 }
 
-// RouteRule sends matching traffic to an outbound. A rule may match on source
-// IPs, rule sets, or both (an AND match), which renders to a single sing-box
-// route.rules entry.
-type RouteRule struct {
-	ID       string   `json:"id"`
-	Enabled  bool     `json:"enabled"`
-	Name     string   `json:"name"`
-	Group    string   `json:"group"`
-	Sources  []string `json:"sources"`
-	RuleSets []string `json:"rulesets"`
-	Outbound string   `json:"outbound"`
-}
-
+// RuleSet is a remote rule-set derived from a rule group's "remote:<url>"
+// rule. It is not a UCI section: the daemon caches it on disk under Path.
 type RuleSet struct {
-	ID             string `json:"id"`
-	Enabled        bool   `json:"enabled"`
-	Name           string `json:"name"`
-	Type           string `json:"type"`
-	Format         string `json:"format"`
-	URL            string `json:"url"`
-	Path           string `json:"path"`
-	UpdateInterval string `json:"update_interval"`
-	LastUpdate     string `json:"last_update"`
-	LastError      string `json:"last_error"`
+	ID     string `json:"id"`
+	URL    string `json:"url"`
+	Format string `json:"format"`
+	Path   string `json:"path"`
 }
 
 // Transparent configures transparent proxying for LAN clients. A global
@@ -182,8 +200,10 @@ type Device struct {
 	// tproxied. Useful for gaming consoles, where proxied UDP breaks NAT type
 	// and adds latency. Only meaningful when the device's effective mode is
 	// tproxy; ignored otherwise.
-	BypassUDP bool   `json:"bypass_udp"`
-	Group     string `json:"group"` // optional; drives a sing-box route rule, not the firewall
+	BypassUDP bool `json:"bypass_udp"`
+	// Group optionally pins the device's traffic to an outbound target
+	// (rendered as a source-IP route rule ahead of the ordered routes).
+	Group string `json:"group"`
 }
 
 // Effective resolves a device's mode, expanding "default"/"" to the global
@@ -246,7 +266,6 @@ func DefaultConfig() Config {
 		Manager: Manager{
 			Enabled:        false,
 			LogLevel:       "info",
-			ActiveGroup:    "home",
 			RuntimeMode:    "rule",
 			SingBoxBinary:  DefaultSingBoxBinary,
 			SocketPath:     DefaultSocketPath,
@@ -256,14 +275,15 @@ func DefaultConfig() Config {
 			TProxyPort:     7893,
 			DNSPort:        1053,
 			UpdateInterval: "24h",
+			ProbeInterval:  "10m",
+			TestURL:        "https://www.gstatic.com/generate_204",
 		},
-		Groups:        map[string]Group{},
-		Subscriptions: map[string]Subscription{},
-		Nodes:         map[string]Node{},
-		DNSServers:    map[string]DNSServer{},
-		DNSRules:      map[string]DNSRule{},
-		RouteRules:    map[string]RouteRule{},
-		RuleSets:      map[string]RuleSet{},
+		Outbounds:      map[string]Outbound{},
+		Subscriptions:  map[string]Subscription{},
+		OutboundGroups: map[string]OutboundGroup{},
+		RuleGroups:     map[string]RuleGroup{},
+		DNSServers:     map[string]DNSServer{},
+		DNSRules:       map[string]DNSRule{},
 		Transparent: Transparent{
 			DefaultMode: "off",
 		},
@@ -277,32 +297,12 @@ func DefaultConfig() Config {
 	}
 }
 
-func (cfg Config) ActiveGroup() *Group {
-	group, ok := cfg.Groups[cfg.Manager.ActiveGroup]
-	if !ok {
-		return nil
-	}
-	return &group
-}
-
-func (cfg Config) ActiveNode() *Node {
-	group := cfg.ActiveGroup()
-	if group == nil || group.SelectedNode == "" {
-		return nil
-	}
-	node, ok := cfg.Nodes[group.SelectedNode]
-	if !ok {
-		return nil
-	}
-	return &node
-}
-
-// DNSRulesForGroup returns the enabled DNS rules bound to the given group,
-// ordered by ID so first-match precedence is deterministic.
-func (cfg Config) DNSRulesForGroup(groupID string) []DNSRule {
+// EnabledDNSRules returns the enabled DNS rules ordered by ID so first-match
+// precedence is deterministic.
+func (cfg Config) EnabledDNSRules() []DNSRule {
 	rules := make([]DNSRule, 0, len(cfg.DNSRules))
 	for _, rule := range cfg.DNSRules {
-		if rule.Enabled && rule.Group == groupID {
+		if rule.Enabled {
 			rules = append(rules, rule)
 		}
 	}
@@ -310,23 +310,28 @@ func (cfg Config) DNSRulesForGroup(groupID string) []DNSRule {
 	return rules
 }
 
-// RouteRulesForGroup returns the enabled route rules bound to the given group,
-// ordered by ID so first-match precedence is deterministic.
-func (cfg Config) RouteRulesForGroup(groupID string) []RouteRule {
-	rules := make([]RouteRule, 0, len(cfg.RouteRules))
-	for _, rule := range cfg.RouteRules {
-		if rule.Enabled && rule.Group == groupID {
-			rules = append(rules, rule)
-		}
+// Kind reports what an outbound target ID refers to: "builtin" (direct/block),
+// "group", "outbound", "subscription", or "" when unknown. UCI section names
+// are unique per package, so an ID never resolves to two kinds.
+func (cfg Config) Kind(id string) string {
+	switch {
+	case id == "direct" || id == "block":
+		return "builtin"
+	case hasKey(cfg.OutboundGroups, id):
+		return "group"
+	case hasKey(cfg.Outbounds, id):
+		return "outbound"
+	case hasKey(cfg.Subscriptions, id):
+		return "subscription"
 	}
-	sortByID(rules, func(r RouteRule) string { return r.ID })
-	return rules
+	return ""
+}
+
+func hasKey[T any](m map[string]T, key string) bool {
+	_, ok := m[key]
+	return ok
 }
 
 func sortByID[T any](items []T, id func(T) string) {
-	for i := 1; i < len(items); i++ {
-		for j := i; j > 0 && id(items[j-1]) > id(items[j]); j-- {
-			items[j-1], items[j] = items[j], items[j-1]
-		}
-	}
+	sort.SliceStable(items, func(i, j int) bool { return id(items[i]) < id(items[j]) })
 }

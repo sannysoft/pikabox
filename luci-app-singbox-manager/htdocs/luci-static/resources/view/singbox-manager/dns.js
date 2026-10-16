@@ -45,12 +45,16 @@ var callDNSTest = rpc.declare({
 	expect: { '': {} }
 });
 
-var callSetGroup = rpc.declare({
+var callSetSettings = rpc.declare({
 	object: 'singbox.manager',
-	method: 'group_set',
-	params: [ 'group' ],
+	method: 'settings_set',
+	params: [ 'settings' ],
 	expect: { '': {} }
 });
+
+// Detour targets (outbound groups/subscriptions/outbounds) from the last load;
+// the server modal offers them alongside direct and "proxy" (= the final).
+var DETOURS = [];
 
 function field(root, name) {
 	return root.querySelector('[name="%s"]'.format(name));
@@ -150,15 +154,14 @@ function readServerForm(root, row) {
 	};
 }
 
-function readRuleForm(root, row, activeGroup) {
+function readRuleForm(root, row) {
 	var enabled = field(root, 'enabled');
 	return {
 		id: row.id || formValue(root, 'id'),
 		enabled: enabled ? enabled.checked : true,
 		name: formValue(root, 'name'),
-		group: activeGroup,
 		sources: splitList(formValue(root, 'sources')),
-		rulesets: splitList(formValue(root, 'rulesets')),
+		rule_groups: splitList(formValue(root, 'rule_groups')),
 		server: formValue(root, 'server')
 	};
 }
@@ -207,8 +210,10 @@ function showServerModal(view, row) {
 				E('select', { 'class': 'cbi-input-select', 'name': 'detour' }, [
 					E('option', { 'value': '', 'selected': selected('', row.detour || '') }, _('(unset)')),
 					E('option', { 'value': 'direct', 'selected': selected('direct', row.detour) }, 'direct'),
-					E('option', { 'value': 'proxy', 'selected': selected('proxy', row.detour) }, 'proxy')
-				])
+					E('option', { 'value': 'proxy', 'selected': selected('proxy', row.detour) }, _('proxy (= default route)'))
+				].concat(DETOURS.map(function(t) {
+					return E('option', { 'value': t.id, 'selected': selected(t.id, row.detour) }, [ '%s (%s)'.format(t.name || t.id, t.kind) ]);
+				})))
 			])
 		]),
 		E('div', { 'class': 'right' }, [
@@ -241,7 +246,7 @@ function showDeleteServerModal(view, row, data) {
 	if (rules.length) {
 		body.push(E('p', {}, [ _('These DNS rules use it and will be deleted too:') ]));
 		body.push(E('ul', {}, rules.map(function(rule) {
-			var detail = (rule.sources || []).concat(rule.rulesets || []).join(', ');
+			var detail = (rule.sources || []).concat(rule.rule_groups || []).join(', ');
 			return E('li', {}, [ (rule.name || rule.id) + (detail ? ' (' + detail + ')' : '') ]);
 		})));
 	} else {
@@ -271,7 +276,7 @@ function showDeleteServerModal(view, row, data) {
 }
 
 function showRuleModal(view, data, row) {
-	row = row || { enabled: true, sources: [], rulesets: [] };
+	row = row || { enabled: true, sources: [], rule_groups: [] };
 	var servers = (data && data.servers) || [];
 	ui.showModal(row.id ? _('Edit DNS Rule') : _('Add DNS Rule'), [
 		E('div', { 'class': 'singbox-manager-modal-form' }, [
@@ -301,17 +306,18 @@ function showRuleModal(view, data, row) {
 				'placeholder': '192.168.200.124, 192.168.200.0/24'
 			}) ]),
 			devicePicker(data.devices, 'sources'),
-			E('label', {}, [ _('Rule sets (optional)'), E('input', {
+			E('label', {}, [ _('Rule groups (optional, IDs)'), E('input', {
 				'class': 'cbi-input-text',
-				'name': 'rulesets',
-				'value': (row.rulesets || []).join(', '),
-				'placeholder': 'geosite-ir'
+				'name': 'rule_groups',
+				'value': (row.rule_groups || []).join(', '),
+				'placeholder': ((data.rule_groups || [])[0] || {}).id || 'telegram'
 			}) ]),
+			E('p', { 'class': 'singbox-manager-inline-help' }, [ _('Available: %s').format((data.rule_groups || []).map(function(g) { return g.id; }).join(', ') || _('none')) ]),
 			E('label', {}, [
 				_('Resolver'),
 				E('select', { 'class': 'cbi-input-select', 'name': 'server' }, serverOptions(servers, row.server))
 			]),
-			E('p', { 'class': 'singbox-manager-inline-help' }, _('Queries from the matched sources (and/or rule sets) use the selected resolver. Provide at least one source or rule set.'))
+			E('p', { 'class': 'singbox-manager-inline-help' }, _('Queries from the matched sources AND matching the rule groups use the selected resolver. Provide at least one source or rule group.'))
 		]),
 		E('div', { 'class': 'right' }, [
 			E('button', { 'class': 'btn cbi-button', 'click': ui.hideModal }, _('Cancel')),
@@ -319,7 +325,7 @@ function showRuleModal(view, data, row) {
 			E('button', {
 				'class': 'btn cbi-button cbi-button-apply',
 				'click': ui.createHandlerFn(view, function() {
-					var payload = readRuleForm(document.querySelector('.singbox-manager-modal-form'), row, data.active_group);
+					var payload = readRuleForm(document.querySelector('.singbox-manager-modal-form'), row);
 					return callSetDNSRule(payload).then(function(result) {
 						if (!showResult(result, _('Save failed')))
 							return;
@@ -357,7 +363,6 @@ function showDeleteRuleModal(view, row) {
 
 function renderResolution(view, data) {
 	var servers = (data && data.servers) || [];
-	var group = (data && data.group) || {};
 	var capture = data && data.capture_enabled;
 	var options = [ E('option', { 'value': '', 'selected': selected('', data.dns_final || '') }, _('(first enabled server)')) ]
 		.concat(serverOptions(servers, data.dns_final));
@@ -373,8 +378,7 @@ function renderResolution(view, data) {
 			E('select', {
 				'class': 'cbi-input-select',
 				'change': ui.createHandlerFn(view, function(ev) {
-					var next = Object.assign({}, group, { dns_final: ev.target.value });
-					return callSetGroup(next).then(function(result) {
+					return callSetSettings({ dns_final: ev.target.value }).then(function(result) {
 						if (!showResult(result, _('Save failed')))
 							return refreshView(view);
 						theme.notify(_('Default resolver updated'));
@@ -431,14 +435,12 @@ function renderServers(view, servers, data) {
 }
 
 function renderRules(view, data) {
-	var rules = ((data && data.rules) || []).filter(function(rule) {
-		return !rule.group || rule.group === data.active_group;
-	});
+	var rules = (data && data.rules) || [];
 	return E('table', { 'class': 'singbox-manager-table' }, [
 		E('thead', {}, E('tr', {}, [
 			E('th', {}, _('Rule')),
 			E('th', {}, _('Sources')),
-			E('th', {}, _('Rule sets')),
+			E('th', {}, _('Rule groups')),
 			E('th', {}, _('Resolver')),
 			E('th', {}, _('Enabled')),
 			E('th', {}, '')
@@ -447,7 +449,7 @@ function renderRules(view, data) {
 			return E('tr', {}, [
 				E('td', {}, theme.text(rule.name || rule.id)),
 				E('td', {}, theme.text((rule.sources || []).join(', '))),
-				E('td', {}, theme.text((rule.rulesets || []).join(', '))),
+				E('td', {}, theme.text((rule.rule_groups || []).join(', '))),
 				E('td', {}, theme.text(rule.server)),
 				E('td', {}, rule.enabled ? _('Yes') : _('No')),
 				E('td', {}, E('div', { 'class': 'singbox-manager-actions' }, [
@@ -496,6 +498,7 @@ return view.extend({
 	},
 
 	render: function(data) {
+		DETOURS = (data && data.detours) || [];
 		var view = this;
 		data = data || {};
 		var servers = data.servers || [];
