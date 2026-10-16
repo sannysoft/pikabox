@@ -36,19 +36,27 @@ var nonProxyTypes = map[string]bool{
 // ParseOutbounds turns a subscription payload into outbounds. A sing-box JSON
 // config (or bare outbounds array) is passed through verbatim, so every
 // protocol and option sing-box knows survives; share-URI lists are converted.
-func ParseOutbounds(data []byte, format string) ([]Item, error) {
+//
+// Entries sing-box cannot run (an unsupported protocol or transport such as
+// xhttp) are skipped, not fatal: skipped summarises them. err is reserved for
+// a payload that is not a subscription at all (e.g. an HTML page).
+func ParseOutbounds(data []byte, format string) (items []Item, skipped string, err error) {
 	payload, err := decodePayload(strings.TrimSpace(string(data)), format)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	if looksLikeJSONConfig(payload) {
-		return parseJSONOutbounds([]byte(strings.TrimSpace(payload)))
+		items, err = parseJSONOutbounds([]byte(strings.TrimSpace(payload)))
+		return items, "", err
 	}
-	var items []Item
 	var parseErrors []string
+	recognized := false
 	for _, line := range strings.FieldsFunc(payload, func(r rune) bool {
 		return r == '\n' || r == '\r' || r == '\t' || r == ' '
 	}) {
+		if scheme, _, ok := strings.Cut(line, "://"); ok && proxySchemes[strings.ToLower(scheme)] {
+			recognized = true
+		}
 		item, err := ParseSource(line)
 		if err != nil {
 			parseErrors = append(parseErrors, err.Error())
@@ -56,15 +64,29 @@ func ParseOutbounds(data []byte, format string) ([]Item, error) {
 		}
 		items = append(items, item)
 	}
-	if len(items) == 0 && len(parseErrors) > 0 {
-		return nil, summarizeErrors(parseErrors)
+	if len(parseErrors) > 0 {
+		skipped = summarizeErrors(parseErrors)
 	}
-	return items, nil
+	if len(items) == 0 && !recognized {
+		if skipped == "" {
+			skipped = "empty payload"
+		}
+		return nil, "", fmt.Errorf("not a subscription: %s", skipped)
+	}
+	return items, skipped, nil
+}
+
+// proxySchemes are share-URI schemes of real proxies, supported or not; a
+// payload containing any of them is a subscription even if none can be used.
+var proxySchemes = map[string]bool{
+	"vless": true, "vmess": true, "trojan": true, "ss": true, "ssr": true,
+	"hysteria": true, "hysteria2": true, "hy2": true, "tuic": true,
+	"wireguard": true, "wg": true, "socks": true, "socks5": true, "anytls": true,
 }
 
 // summarizeErrors collapses repeated per-entry errors ("19× unsupported
 // transport ...") so a subscription of one unsupported kind reads clearly.
-func summarizeErrors(messages []string) error {
+func summarizeErrors(messages []string) string {
 	counts := map[string]int{}
 	var order []string
 	for _, message := range messages {
@@ -80,7 +102,7 @@ func summarizeErrors(messages []string) error {
 		}
 		parts = append(parts, message)
 	}
-	return fmt.Errorf("no usable outbounds: %s", strings.Join(parts, "; "))
+	return strings.Join(parts, "; ")
 }
 
 // ParseSource converts one outbound definition — a share URI or a sing-box

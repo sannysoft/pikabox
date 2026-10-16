@@ -19,7 +19,7 @@ func TestParseOutboundsBase64URIList(t *testing.T) {
 		"tuic://00000000-0000-0000-0000-000000000002:tuic-pass@tuic.example.net:443?congestion_control=bbr&udp_relay_mode=native&sni=tuic.example.net#TUIC",
 		"bogus://nothing",
 	}, "\n")
-	items, err := ParseOutbounds([]byte(base64.StdEncoding.EncodeToString([]byte(payload))), "auto")
+	items, _, err := ParseOutbounds([]byte(base64.StdEncoding.EncodeToString([]byte(payload))), "auto")
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -50,7 +50,7 @@ func TestParseOutboundsBase64URIList(t *testing.T) {
 	if tuic := items[4].Outbound; tuic["congestion_control"] != "bbr" || tuic["udp_relay_mode"] != "native" {
 		t.Fatalf("tuic = %#v", tuic)
 	}
-	if _, err := ParseOutbounds([]byte("bogus://a\nalso://b"), "plain"); err == nil {
+	if _, _, err := ParseOutbounds([]byte("bogus://a\nalso://b"), "plain"); err == nil {
 		t.Fatal("a payload with no parsable line must fail")
 	}
 }
@@ -69,7 +69,7 @@ func TestParseOutboundsSingBoxJSONPassthrough(t *testing.T) {
 			{"type": "vless", "tag": "no server"}
 		]
 	}`
-	items, err := ParseOutbounds([]byte(config), "auto")
+	items, _, err := ParseOutbounds([]byte(config), "auto")
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -93,11 +93,11 @@ func TestParseOutboundsSingBoxJSONPassthrough(t *testing.T) {
 		t.Fatalf("protocol unknown to the URI parser must still pass through: %#v", items[1])
 	}
 
-	bare, err := ParseOutbounds([]byte(base64.StdEncoding.EncodeToString([]byte(`[{"type":"shadowsocks","tag":"ss","server":"ss.example.com","server_port":8388,"method":"aes-128-gcm","password":"pass"}]`))), "auto")
+	bare, _, err := ParseOutbounds([]byte(base64.StdEncoding.EncodeToString([]byte(`[{"type":"shadowsocks","tag":"ss","server":"ss.example.com","server_port":8388,"method":"aes-128-gcm","password":"pass"}]`))), "auto")
 	if err != nil || len(bare) != 1 || bare[0].Name != "ss" {
 		t.Fatalf("base64 bare array = %#v, %v", bare, err)
 	}
-	if _, err := ParseOutbounds([]byte(`{"outbounds":[{"type":"direct","tag":"d"}]}`), "auto"); err == nil {
+	if _, _, err := ParseOutbounds([]byte(`{"outbounds":[{"type":"direct","tag":"d"}]}`), "auto"); err == nil {
 		t.Fatal("config without proxies must fail")
 	}
 }
@@ -293,5 +293,27 @@ func TestDueUsesSubscriptionUpdateInterval(t *testing.T) {
 	source.Enabled = false
 	if Due(source, now) {
 		t.Fatal("disabled subscription should not be due")
+	}
+}
+
+func TestParseOutboundsSkipsUnsupportedEntries(t *testing.T) {
+	payload := "vless://u@a.example:443?type=xhttp&security=reality#x1\n" +
+		"vless://u@b.example:443?type=xhttp&security=reality#x2\n" +
+		"trojan://pw@c.example:443?security=tls&sni=c.example#ok"
+	items, skipped, err := ParseOutbounds([]byte(payload), "plain")
+	if err != nil || len(items) != 1 || items[0].Name != "ok" {
+		t.Fatalf("items=%v err=%v", items, err)
+	}
+	if !strings.HasPrefix(skipped, "2× ") || !strings.Contains(skipped, "xhttp") {
+		t.Fatalf("skipped = %q", skipped)
+	}
+	// Only unsupported entries: a valid (empty) result, not an error.
+	items, skipped, err = ParseOutbounds([]byte("vless://u@a.example:443?type=xhttp#x"), "plain")
+	if err != nil || len(items) != 0 || skipped == "" {
+		t.Fatalf("all-unsupported: items=%v skipped=%q err=%v", items, skipped, err)
+	}
+	// Not a subscription at all (an HTML page) is still an error.
+	if _, _, err := ParseOutbounds([]byte("<!DOCTYPE html><html></html>"), "auto"); err == nil {
+		t.Fatal("HTML payload must be an error")
 	}
 }

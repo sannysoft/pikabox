@@ -62,7 +62,7 @@ func refreshSubscription(configPath string, id string) (managerconfig.Subscripti
 			return fail(err)
 		}
 	}
-	items, err := subscription.ParseOutbounds(data, sub.Format)
+	items, skipped, err := subscription.ParseOutbounds(data, sub.Format)
 	if err != nil {
 		return fail(err)
 	}
@@ -77,6 +77,7 @@ func refreshSubscription(configPath string, id string) (managerconfig.Subscripti
 		FetchedAt:  time.Now().UTC().Format(time.RFC3339),
 		Candidates: candidates,
 		Matched:    matched,
+		Skipped:    skipped,
 		Selected:   previous.Selected,
 	}
 	if err := managerconfig.SaveSubscriptionState(id, state); err != nil {

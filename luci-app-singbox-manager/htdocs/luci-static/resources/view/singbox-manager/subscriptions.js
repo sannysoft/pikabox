@@ -107,7 +107,10 @@ function renderTable(view, subs) {
 					E('div', { 'class': 'singbox-manager-hint singbox-manager-mono', 'title': sub.filter || '' }, theme.text(sub.filter ? sub.filter.slice(0, 60) : _('no filter'))),
 					E('div', { 'class': 'singbox-manager-hint' }, theme.text(sub.count ? _('top %d').format(sub.count) : _('all alive')))
 				]),
-				E('td', {}, [ '%d / %d / %d'.format(sub.total || 0, sub.matched || 0, sub.alive || 0) ]),
+				E('td', {}, [
+					E('div', {}, [ '%d / %d / %d'.format(sub.total || 0, sub.matched || 0, sub.alive || 0) ]),
+					sub.skipped ? E('div', { 'class': 'singbox-manager-hint', 'title': sub.skipped }, theme.text(_('skipped: %s').format(sub.skipped.length > 70 ? sub.skipped.slice(0, 70) + '…' : sub.skipped))) : ''
+				]),
 				E('td', {}, theme.latency(sub.best_ms, sub.alive ? 'ok' : (sub.matched ? 'down' : ''))),
 				E('td', {}, E('div', { 'class': 'singbox-manager-members' }, (sub.selected || []).length ? sub.selected.map(function(c) {
 					return E('span', { 'class': 'singbox-manager-member', 'title': c.server + ':' + c.port }, [ c.name + ' · ' + (c.latency_ms ? c.latency_ms + ' ms' : '-') ]);

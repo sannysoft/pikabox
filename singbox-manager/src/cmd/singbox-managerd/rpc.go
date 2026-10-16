@@ -345,6 +345,7 @@ type subscriptionView struct {
 	managerconfig.Subscription
 	FetchedAt string          `json:"fetched_at"`
 	Total     int             `json:"total"`
+	Skipped   string          `json:"skipped,omitempty"`
 	Matched   int             `json:"matched"`
 	Alive     int             `json:"alive"`
 	BestMS    int             `json:"best_ms"`
@@ -395,7 +396,7 @@ func listSubscriptions(configPath string, _ json.RawMessage) map[string]any {
 	views := []subscriptionView{}
 	for _, id := range sortedIDs(cfg.Subscriptions) {
 		state := managerconfig.LoadSubscriptionState(id)
-		view := subscriptionView{Subscription: cfg.Subscriptions[id], FetchedAt: state.FetchedAt, Total: len(state.Candidates), Matched: len(state.Matched), Selected: []candidateView{}}
+		view := subscriptionView{Subscription: cfg.Subscriptions[id], FetchedAt: state.FetchedAt, Total: len(state.Candidates), Skipped: state.Skipped, Matched: len(state.Matched), Selected: []candidateView{}}
 		for _, candidate := range candidateViews(state, results) {
 			if candidate.Health == "ok" {
 				view.Alive++
@@ -465,7 +466,7 @@ func refreshSubscriptionRPC(configPath string, raw json.RawMessage) map[string]a
 	if err != nil {
 		return fail(err)
 	}
-	return ok("total", len(state.Candidates), "matched", len(state.Matched), "selected", state.Selected)
+	return ok("total", len(state.Candidates), "matched", len(state.Matched), "selected", state.Selected, "skipped", state.Skipped)
 }
 
 func testSubscription(configPath string, raw json.RawMessage) map[string]any {

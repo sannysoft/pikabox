@@ -33,6 +33,9 @@ type SubscriptionState struct {
 	// (kept apart so a filter edit re-applies without a refetch).
 	Candidates []Candidate `json:"candidates"`
 	Matched    []string    `json:"matched"`
+	// Skipped summarises entries that could not become sing-box outbounds
+	// (e.g. "19× unsupported transport xhttp"); they are ignored.
+	Skipped string `json:"skipped,omitempty"`
 	// Selected is the top-N alive candidate IDs, fastest first.
 	Selected []string `json:"selected"`
 }
