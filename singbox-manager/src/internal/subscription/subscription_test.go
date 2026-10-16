@@ -317,3 +317,47 @@ func TestParseOutboundsSkipsUnsupportedEntries(t *testing.T) {
 		t.Fatal("HTML payload must be an error")
 	}
 }
+
+func TestParseOutboundsXrayJSONConfigs(t *testing.T) {
+	payload := `[
+	 {"remarks":"Auto","outbounds":[
+	   {"tag":"a","protocol":"hysteria","settings":{"address":"h1.example","port":3443,"version":2},
+	    "streamSettings":{"network":"hysteria","hysteriaSettings":{"version":2,"auth":"pw1"},"security":"tls","tlsSettings":{"serverName":"h1.example","fingerprint":"chrome","alpn":["h3"]}}},
+	   {"tag":"b","protocol":"vless","settings":{"vnext":[{"address":"v1.example","port":8443,"users":[{"id":"u1","flow":""}]}]},
+	    "streamSettings":{"network":"xhttp","security":"reality","realitySettings":{"serverName":"x.com","publicKey":"pk","shortId":"ab"}}},
+	   {"protocol":"freedom"},{"protocol":"blackhole"}]},
+	 {"remarks":"DE | HYSTERIA2","outbounds":[
+	   {"tag":"proxy","protocol":"hysteria","settings":{"address":"h1.example","port":3443,"version":2},
+	    "streamSettings":{"network":"hysteria","hysteriaSettings":{"version":2,"auth":"pw1"},"security":"tls","tlsSettings":{"serverName":"h1.example","fingerprint":"chrome","alpn":["h3"]}}},
+	   {"protocol":"freedom"}]},
+	 {"remarks":"NL | VLESS","outbounds":[
+	   {"tag":"proxy","protocol":"vless","settings":{"vnext":[{"address":"v2.example","port":443,"users":[{"id":"u2","flow":"xtls-rprx-vision"}]}]},
+	    "streamSettings":{"network":"tcp","security":"reality","realitySettings":{"serverName":"www.mozilla.org","publicKey":"pk2","shortId":"cd","fingerprint":"chrome"}}}]}
+	]`
+	items, skipped, err := ParseOutbounds([]byte(payload), "auto")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(skipped, "xhttp") {
+		t.Fatalf("xhttp entry must be skipped, got %q", skipped)
+	}
+	candidates := Candidates("imp", items)
+	if len(candidates) != 2 {
+		t.Fatalf("want hysteria2 (deduped) + vless, got %d: %#v", len(candidates), candidates)
+	}
+	hy := candidates[0]
+	if hy.Name != "DE | HYSTERIA2" {
+		t.Fatalf("a server must be named after its own config, got %q", hy.Name)
+	}
+	tls, _ := hy.Outbound["tls"].(map[string]any)
+	if hy.Outbound["type"] != "hysteria2" || hy.Outbound["password"] != "pw1" || hy.Outbound["server_port"] != 3443 ||
+		tls["server_name"] != "h1.example" || tls["utls"] != nil {
+		t.Fatalf("hysteria2 = %#v", hy.Outbound)
+	}
+	vl := candidates[1].Outbound
+	vtls, _ := vl["tls"].(map[string]any)
+	reality, _ := vtls["reality"].(map[string]any)
+	if vl["type"] != "vless" || vl["flow"] != "xtls-rprx-vision" || reality["public_key"] != "pk2" || reality["short_id"] != "cd" {
+		t.Fatalf("vless reality = %#v", vl)
+	}
+}

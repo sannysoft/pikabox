@@ -46,7 +46,16 @@ func ParseOutbounds(data []byte, format string) (items []Item, skipped string, e
 		return nil, "", err
 	}
 	if looksLikeJSONConfig(payload) {
-		items, err = parseJSONOutbounds([]byte(strings.TrimSpace(payload)))
+		data := []byte(strings.TrimSpace(payload))
+		if looksLikeXray(data) {
+			var xraySkipped []string
+			items, xraySkipped, err = parseXrayOutbounds(data)
+			if len(xraySkipped) > 0 {
+				skipped = summarizeErrors(xraySkipped)
+			}
+			return items, skipped, err
+		}
+		items, err = parseJSONOutbounds(data)
 		return items, "", err
 	}
 	var parseErrors []string
