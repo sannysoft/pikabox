@@ -433,6 +433,27 @@ return baseclass.extend({
 		return E('span', { 'class': 'singbox-manager-ms ' + cls }, [ ms + ' ms' ]);
 	},
 
+	// ago formats an ISO time as "12s ago" / "5m ago" / "3h ago" / "2d ago".
+	ago: function(iso) {
+		if (!iso)
+			return '';
+		var s = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000));
+		if (s < 60)
+			return _('%ds ago').format(s);
+		if (s < 3600)
+			return _('%dm ago').format(Math.floor(s / 60));
+		if (s < 86400)
+			return _('%dh ago').format(Math.floor(s / 3600));
+		return _('%dd ago').format(Math.floor(s / 86400));
+	},
+
+	// timeAgo renders a relative time with the exact local time on hover.
+	timeAgo: function(iso, empty) {
+		if (!iso)
+			return E('span', {}, [ empty || '-' ]);
+		return E('time', { 'datetime': iso, 'title': new Date(iso).toLocaleString() }, [ this.ago(iso) ]);
+	},
+
 	field: function(root, name) {
 		return root.querySelector('[name="%s"]'.format(name));
 	},

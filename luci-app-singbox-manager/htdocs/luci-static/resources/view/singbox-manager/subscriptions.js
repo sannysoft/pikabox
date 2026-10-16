@@ -116,7 +116,7 @@ function renderTable(view, subs) {
 					return E('span', { 'class': 'singbox-manager-member', 'title': c.server + ':' + c.port }, [ c.name + ' · ' + (c.latency_ms ? c.latency_ms + ' ms' : '-') ]);
 				}) : [ E('span', { 'class': 'singbox-manager-hint' }, _('none — not used yet')) ])),
 				E('td', {}, [
-					E('div', {}, theme.text(sub.last_update ? new Date(sub.last_update).toLocaleString() : _('never'))),
+					E('div', {}, theme.timeAgo(sub.last_update, _('never'))),
 					sub.last_error ? E('div', { 'class': 'singbox-manager-status-error', 'title': sub.last_error }, theme.text(sub.last_error.slice(0, 80))) : ''
 				]),
 				E('td', {}, E('div', { 'class': 'singbox-manager-actions' }, [

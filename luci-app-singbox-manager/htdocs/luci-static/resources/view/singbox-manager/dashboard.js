@@ -335,18 +335,7 @@ function renderStaleAlert(view, data) {
 
 // ---- exit path -------------------------------------------------------------
 
-function ago(iso) {
-	if (!iso)
-		return '';
-	var s = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000));
-	if (s < 60)
-		return _('%ds ago').format(s);
-	if (s < 3600)
-		return _('%dm ago').format(Math.floor(s / 60));
-	if (s < 86400)
-		return _('%dh ago').format(Math.floor(s / 3600));
-	return _('%dd ago').format(Math.floor(s / 86400));
-}
+var ago = function(iso) { return theme.ago(iso); };
 
 function hopKind(kind) {
 	return kind;

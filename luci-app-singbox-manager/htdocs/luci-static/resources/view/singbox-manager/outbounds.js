@@ -49,7 +49,7 @@ function renderTable(view, outbounds) {
 				E('td', {}, ob.error ? E('span', { 'class': 'singbox-manager-status-error', 'title': ob.error }, [ _('invalid') ]) : theme.text(ob.type)),
 				E('td', { 'class': 'singbox-manager-wrap' }, theme.text(ob.server ? ob.server + ':' + ob.port : '')),
 				E('td', {}, theme.latency(probe.latency_ms, probe.health, probe.error)),
-				E('td', {}, theme.text(probe.checked_at ? new Date(probe.checked_at).toLocaleTimeString() : '')),
+				E('td', {}, theme.timeAgo(probe.checked_at, _('never'))),
 				E('td', {}, ob.enabled ? _('Yes') : _('No')),
 				E('td', {}, E('div', { 'class': 'singbox-manager-actions' }, [
 					E('button', { 'class': 'btn cbi-button', 'click': ui.createHandlerFn(view, function() {
