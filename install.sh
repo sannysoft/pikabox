@@ -86,8 +86,16 @@ else
 	opkg install sing-box
 	[ "${PIKABOX_TPROXY:-0}" = "1" ] && { say "Installing kmod-nft-tproxy"; opkg install kmod-nft-tproxy; }
 	say "Installing Pika-box"
+	# opkg reports a kept, user-modified config under "Collected errors"; that
+	# notice is expected on upgrades and handled below.
 	opkg install "$WORKDIR/pikabox.ipk" "$WORKDIR/luci-app-pikabox.ipk"
 fi
+
+# On upgrade the package manager keeps the existing config and drops the new
+# default next to it; the daemon only reads /etc/config/pikabox.
+for f in /etc/config/pikabox-opkg /etc/config/pikabox.apk-new; do
+	[ -f "$f" ] && rm -f "$f" && say "Kept your existing configuration (/etc/config/pikabox)"
+done
 
 /etc/init.d/pikaboxd enable
 /etc/init.d/pikaboxd restart
