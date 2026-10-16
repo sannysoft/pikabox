@@ -19,9 +19,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Pika-box targets OpenWrt 25.12+ (apk). Packages built with the 25.12
-        # SDK install on any 25.12.x.
+        # OpenWrt 25.12 ships apk/.apk; 24.10 ships opkg/.ipk. The SDK for each
+        # release emits whichever format that release uses. Both feeds carry a
+        # sing-box (1.12.x on 24.10, 1.13.x on 25.12) the rendered config suits.
         release:
+          - { version: "24.10.7", series: "24.10" }
           - { version: "25.12.4", series: "25.12" }
         arch: [x86_64, aarch64, aarch64_cortexa53, armv7, mipsel]
     steps:
@@ -129,7 +131,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           cat > notes.md <<EOF
-          ## Install / upgrade (OpenWrt 25.12+)
+          ## Install / upgrade (OpenWrt 24.10 or 25.12+)
 
           On the router, as root:
 

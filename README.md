@@ -84,7 +84,7 @@ Subscription candidates and their top-N selection live in
 
 ## Install
 
-Requires **OpenWrt 25.12+** (the `apk` package manager). On the router, as root:
+Supports **OpenWrt 24.10** (opkg) and **25.12+** (apk). On the router, as root:
 
 ```sh
 wget -qO- https://github.com/sannysoft/pikabox/releases/latest/download/install.sh | sh
@@ -103,16 +103,23 @@ e.g. `wget -qO- …/install.sh | PIKABOX_TPROXY=1 sh`.
 
 Prebuilt architectures: `x86_64`, `aarch64_generic` (armsr/armv8), `aarch64_cortex-a53`
 (mediatek/filogic), `arm_cortex-a15_neon-vfpv4` (armsr/armv7), `mipsel_24kc`
-(ramips/mt7621) — check yours with `cat /etc/apk/arch`. Others: build from source below.
+(ramips/mt7621) — check yours with `grep DISTRIB_ARCH /etc/openwrt_release`. Others: build
+from source below.
 
 ### Manual install
 
-Download `pikabox_25.12_<arch>.apk` and `luci-app-pikabox_25.12.apk` from the
+Download the packages for your series from the
 [latest release](https://github.com/sannysoft/pikabox/releases/latest), then:
 
 ```sh
+# OpenWrt 25.12+ (apk)
 apk update && apk add sing-box
 apk add --allow-untrusted ./pikabox_25.12_<arch>.apk ./luci-app-pikabox_25.12.apk
+
+# OpenWrt 24.10 (opkg)
+opkg update && opkg install sing-box
+opkg install ./pikabox_24.10_<arch>.ipk ./luci-app-pikabox_24.10.ipk
+
 /etc/init.d/pikaboxd enable && /etc/init.d/pikaboxd start
 ```
 
@@ -180,8 +187,8 @@ make undeploy          # remove packages and wipe leftover state
 - **CI** (`.github/workflows/ci.yml`) — `gofmt`, `go vet` and the Go tests on every push to
   `main` and every pull request.
 - **Release** (`.github/workflows/release.yml`) — on a `v*` tag, builds the packages with
-  the OpenWrt 25.12 SDK for every architecture above and publishes a GitHub Release with
-  the `.apk` files, `install.sh`, and install instructions in the notes.
+  the OpenWrt 24.10 (`.ipk`) and 25.12 (`.apk`) SDKs for every architecture above and
+  publishes a GitHub Release with the packages, `install.sh`, and install instructions.
 - **Optional signed apk feed** — set the repo variable `PUBLISH_FEED=true`, add an EC
   private key (PEM) as the `APK_SIGN_KEY` secret, and enable GitHub Pages with "GitHub
   Actions" as the source; tagged releases then also publish a signed feed whose public
