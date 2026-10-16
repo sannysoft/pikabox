@@ -330,6 +330,18 @@ var CSS = [
 	'.pkb-dirty.on{display:inline}',
 
 	/* ---- rule table editor ---- */
+	'.pkb-rules-tools{display:flex;gap:12px;flex-wrap:wrap;align-items:center;justify-content:space-between}',
+	'.pkb-presets{display:grid;gap:14px;max-height:56vh;overflow:auto;padding-right:4px}',
+	'.pkb-presets fieldset{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:6px;margin:0;padding:0;border:0}',
+	'.pkb-presets legend{grid-column:1/-1;padding:0 0 4px;font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--text-color-medium)}',
+	'.pkb-preset{display:flex!important;gap:10px;align-items:flex-start;padding:8px 10px;border:1px solid var(--border-color-medium);border-radius:10px;cursor:pointer;background:var(--background-color-high)}',
+	'.pkb-preset:hover{border-color:#2271b1}',
+	'.pkb-preset:has(input:checked){border-color:#2271b1;background:rgba(34,113,177,.08)}',
+	'.pkb-preset input{margin-top:3px}',
+	'.pkb-preset span{display:grid;gap:1px;min-width:0}',
+	'.pkb-preset strong{font-size:13px;color:var(--text-color-high)}',
+	'.pkb-preset small{font-size:11px;color:var(--text-color-medium)}',
+	'.pkb-preset.pkb-taken{opacity:.55;cursor:default}',
 	'.pkb-namebar{display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap}',
 	'.pkb-namebar>label:first-child{flex:1 1 260px}',
 	'.pkb-namebar input.cbi-input-text{width:100%;box-sizing:border-box}',
@@ -506,7 +518,7 @@ return baseclass.extend({
 
 	// modal shows a form modal; save(root) returns a promise of a backend
 	// result, and on success the modal closes and the view refreshes.
-	modal: function(view, title, body, save, successText, wide) {
+	modal: function(view, title, body, save, successText, wide, saveLabel) {
 		var self = this;
 		ui.showModal(title, [
 			E('div', { 'class': 'pikabox-modal-form' + (wide ? ' pkb-wide' : '') }, body),
@@ -523,7 +535,7 @@ return baseclass.extend({
 							return self.refresh(view);
 						});
 					})
-				}, _('Save'))
+				}, saveLabel || _('Save'))
 			])
 		]);
 	},

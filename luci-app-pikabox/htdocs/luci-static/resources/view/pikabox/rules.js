@@ -17,6 +17,88 @@ var PLACEHOLDERS = {
 	remote: 'https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-telegram.srs'
 };
 
+// Ready-made sing-box rule-sets from github.com/itdoginfo/allow-domains
+// (referenced by URL, never copied; refreshed upstream every few days).
+var PRESET_BASE = 'https://github.com/itdoginfo/allow-domains/releases/latest/download/';
+var PRESETS = [
+	{ section: _('Services'), items: [
+		[ 'youtube', 'YouTube', _('YouTube, its video CDN and thumbnails') ],
+		[ 'telegram', 'Telegram', _('Telegram domains and IP ranges') ],
+		[ 'discord', 'Discord', _('Discord, including voice servers') ],
+		[ 'meta', 'Meta', _('Instagram, Facebook, WhatsApp, Threads') ],
+		[ 'twitter', 'X / Twitter', _('X (Twitter) and its media hosts') ],
+		[ 'tiktok', 'TikTok', '' ],
+		[ 'google_ai', 'Google AI', _('Gemini, AI Studio, NotebookLM') ],
+		[ 'google_meet', 'Google Meet', '' ],
+		[ 'google_play', 'Google Play', '' ],
+		[ 'roblox', 'Roblox', '' ],
+		[ 'hdrezka', 'HDrezka', '' ],
+		[ 'anime', 'Anime sites', '' ],
+		[ 'news', 'News sites', _('Independent and foreign news outlets') ]
+	] },
+	{ section: _('Region lists'), items: [
+		[ 'russia_inside', _('Russia: everything blocked'), _('Blocked in Russia plus foreign sites that block Russian IPs (YouTube, Meta, X, TikTok, Discord, news…). The usual "through the proxy" list.') ],
+		[ 'block', _('Russia: blocked by regulator'), _('Only sites blocked by Russian authorities') ],
+		[ 'geoblock', _('Russia: geo-blocked abroad'), _('Foreign services that refuse Russian IPs') ],
+		[ 'russia_outside', _('Russian services (for use abroad)'), _('Russian sites reachable only from Russian IPs') ],
+		[ 'ukraine_inside', _('Ukraine: blocked'), _('Resources blocked in Ukraine') ]
+	] },
+	{ section: _('Hosting IP ranges'), items: [
+		[ 'cloudflare', 'Cloudflare', _('IP ranges') ],
+		[ 'cloudfront', 'Amazon CloudFront', _('IP ranges') ],
+		[ 'hetzner', 'Hetzner', _('IP ranges') ],
+		[ 'ovh', 'OVH', _('IP ranges') ],
+		[ 'digitalocean', 'DigitalOcean', _('IP ranges') ],
+		[ 'hodca', 'H.O.D.C.A', _('Hetzner, OVH, DigitalOcean, Cloudflare, AWS and Akamai together') ]
+	] }
+];
+
+// showPresets lets the user tick ready-made lists; each becomes a rule group
+// holding one remote rule-set, routed like any other group.
+function showPresets(view, data) {
+	var existing = {};
+	(data.groups || []).forEach(function(g) {
+		(g.rules || []).forEach(function(r) { existing[r] = g.name; });
+	});
+	var filter = E('input', { 'type': 'search', 'placeholder': _('Filter'), 'aria-label': _('Filter presets') });
+	var body = E('div', { 'class': 'pkb-presets' }, PRESETS.map(function(sec) {
+		return E('fieldset', {}, [ E('legend', {}, [ sec.section ]) ].concat(sec.items.map(function(p) {
+			var rule = 'remote:' + PRESET_BASE + p[0] + '.srs';
+			var taken = existing[rule];
+			return E('label', { 'class': 'pkb-preset' + (taken ? ' pkb-taken' : ''), 'data-search': (p[1] + ' ' + p[2] + ' ' + p[0]).toLowerCase() }, [
+				E('input', { 'type': 'checkbox', 'value': p[0], 'data-name': p[1], 'disabled': taken ? 'disabled' : null }),
+				E('span', {}, [
+					E('strong', {}, [ p[1] ]),
+					E('small', {}, [ taken ? _('already in "%s"').format(taken) : (p[2] || p[0] + '.srs') ])
+				])
+			]);
+		})));
+	}));
+	filter.addEventListener('input', function() {
+		var q = filter.value.trim().toLowerCase();
+		body.querySelectorAll('.pkb-preset').forEach(function(el) { el.style.display = !q || el.dataset.search.indexOf(q) >= 0 ? '' : 'none'; });
+	});
+	theme.modal(view, _('Add from presets'), [
+		E('div', { 'class': 'pkb-rules-tools' }, [
+			E('p', { 'class': 'pikabox-inline-help', 'style': 'margin:0;max-width:56ch' }, _('Lists maintained by the itdoginfo/allow-domains project. Each one becomes a rule group; send it somewhere on the Routing page.')),
+			E('label', { 'class': 'pkb-search' }, [ filter ])
+		]),
+		body
+	], function(root) {
+		var picked = Array.prototype.slice.call(root.querySelectorAll('.pkb-presets input:checked'));
+		if (!picked.length)
+			return Promise.resolve({ ok: false, errors: [ _('Tick at least one list') ] });
+		// Sequential: each save rewrites the config file.
+		return picked.reduce(function(chain, box) {
+			return chain.then(function(prev) {
+				if (prev && !prev.ok)
+					return prev;
+				return callSet({ id: '', enabled: true, name: box.dataset.name, rules: [ 'remote:' + PRESET_BASE + box.value + '.srs' ] });
+			});
+		}, Promise.resolve(null));
+	}, _('Rule groups added — route them on the Routing page'), true, _('Add selected'));
+}
+
 function splitRule(rule) {
 	var i = rule.indexOf(':');
 	return i < 0 ? [ '', rule ] : [ rule.slice(0, i), rule.slice(i + 1) ];
@@ -196,6 +278,7 @@ return view.extend({
 									return theme.refresh(view);
 							});
 						}) }, _('Update remote sets')),
+						E('button', { 'class': 'btn cbi-button', 'click': ui.createHandlerFn(view, function() { showPresets(view, data); }) }, _('Add from presets')),
 						E('button', { 'class': 'btn cbi-button cbi-button-add', 'click': ui.createHandlerFn(view, function() { showModal(view, data); }) }, _('Add'))
 					])
 				]),

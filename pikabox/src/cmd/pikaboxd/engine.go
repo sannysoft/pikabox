@@ -288,7 +288,13 @@ func downloadRuleSets(cfg managerconfig.Config, force bool) (bool, []string) {
 		if !force && !ruleset.Due(set, time.Now()) {
 			continue
 		}
-		if _, err := ruleset.Download(context.Background(), set, proxy); err != nil {
+		_, err := ruleset.Download(context.Background(), set, proxy)
+		if err != nil && proxy != "" {
+			// The tunnel may be mid-reload (a save just restarted sing-box) or
+			// the exit may block the host; a direct fetch often still works.
+			_, err = ruleset.Download(context.Background(), set, "")
+		}
+		if err != nil {
 			setRuleSetError(set.URL, err)
 			errs = append(errs, fmt.Sprintf("%s: %v", set.URL, err))
 			continue
