@@ -41,7 +41,11 @@ var methods = map[string]rpcMethod{
 	"manager_set_enabled": {map[string]any{"enabled": "boolean"}, quick, false, setManagerEnabled},
 	"manager_set_paused":  {map[string]any{"paused": "boolean"}, 30 * time.Second, false, setManagerPaused},
 	"manager_set_mode":    {map[string]any{"mode": "string"}, 30 * time.Second, true, setManagerMode},
+	"settings":            {nil, quick, false, settingsRPC},
 	"settings_set":        {map[string]any{"settings": "object"}, 30 * time.Second, true, setSettings},
+	"config_export":       {nil, quick, false, exportConfigRPC},
+	"config_import":       {map[string]any{"text": "string", "dry_run": "boolean"}, 30 * time.Second, false, importConfigRPC},
+	"backup_read":         {map[string]any{"name": "string"}, quick, false, backupReadRPC},
 	"runtime_stats":       {nil, quick, false, func(string, json.RawMessage) map[string]any { return toMap(runtimeStats()) }},
 	"logs":                {map[string]any{"lines": "number"}, quick, false, func(_ string, raw json.RawMessage) map[string]any { return logs(raw) }},
 	"devices":             {nil, quick, false, func(string, json.RawMessage) map[string]any { return devices() }},
@@ -227,34 +231,6 @@ func collectStatus(configPath string) Status {
 		}
 	}
 	return status
-}
-
-// ---- settings ----
-
-type settingsPayload struct {
-	LogLevel      *string `json:"log_level"`
-	ProbeInterval *string `json:"probe_interval"`
-	TestURL       *string `json:"test_url"`
-	DNSFinal      *string `json:"dns_final"`
-}
-
-func setSettings(configPath string, raw json.RawMessage) map[string]any {
-	settings, err := decode[settingsPayload](raw, "settings")
-	if err != nil {
-		return fail(err)
-	}
-	for key, value := range map[string]*string{
-		"log_level": settings.LogLevel, "probe_interval": settings.ProbeInterval,
-		"test_url": settings.TestURL, "dns_final": settings.DNSFinal,
-	} {
-		if value == nil {
-			continue
-		}
-		if err := managerconfig.SetManagerOption(configPath, key, strings.TrimSpace(*value)); err != nil {
-			return fail(err)
-		}
-	}
-	return ok()
 }
 
 // ---- outbounds ----

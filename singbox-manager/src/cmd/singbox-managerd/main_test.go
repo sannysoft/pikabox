@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"net"
 	"os"
 	"path/filepath"
@@ -185,5 +186,48 @@ func TestHealthGraphColumnsAndEdges(t *testing.T) {
 		if !links[l] {
 			t.Errorf("missing edge %s in %v", l, links)
 		}
+	}
+}
+
+func TestImportConfigDryRunThenApply(t *testing.T) {
+	managerconfig.StateDir, managerconfig.RunDir, BackupDir = t.TempDir(), t.TempDir(), t.TempDir()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "singbox-manager")
+	current := "config manager 'main'\n\toption enabled '1'\n"
+	if err := os.WriteFile(path, []byte(current), 0644); err != nil {
+		t.Fatal(err)
+	}
+	incoming := "config manager 'main'\n\toption enabled '0'\n\toption final 'vp1'\n\nconfig outbound 'vp1'\n\toption source '{\"type\":\"socks\",\"server\":\"1.2.3.4\",\"server_port\":1080}'\n"
+	params, _ := json.Marshal(map[string]any{"text": incoming, "dry_run": true})
+	res := importConfigRPC(path, params)
+	if res["ok"] != true || res["summary"].(importSummary).Outbounds != 1 {
+		t.Fatalf("dry run = %#v", res)
+	}
+	if data, _ := os.ReadFile(path); string(data) != current {
+		t.Fatal("a dry run must not touch the config")
+	}
+	if bad := importConfigRPC(path, json.RawMessage(`{"text":"config bogus x\n"}`)); bad["ok"] != false {
+		t.Fatalf("invalid file must be rejected: %#v", bad)
+	}
+	params, _ = json.Marshal(map[string]any{"text": incoming})
+	if res := importConfigRPC(path, params); res["ok"] != true || res["backup"] == "" {
+		t.Fatalf("import = %#v", res)
+	}
+	cfg, err := managerconfig.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, has := cfg.Outbounds["vp1"]; !has || !cfg.Manager.Enabled {
+		t.Fatalf("imported config must apply but keep this router's enabled=1: %#v", cfg.Manager)
+	}
+	if backups := listBackups(); len(backups) != 1 {
+		t.Fatalf("backups = %v", backups)
+	}
+}
+
+func TestSettingsPayloadAcceptsNumbers(t *testing.T) {
+	p, err := decode[settingsPayload](json.RawMessage(`{"settings":{"mixed_port":2081,"log_level":"warn"}}`), "settings")
+	if err != nil || p.MixedPort == nil || *p.MixedPort != "2081" || *p.LogLevel != "warn" || p.TestURL != nil {
+		t.Fatalf("payload = %#v, %v", p, err)
 	}
 }

@@ -164,6 +164,15 @@ var CSS = [
 	'.singbox-manager-metric-value.error{color:#b42318}',
 	'.singbox-manager-logs{display:grid;gap:12px}',
 
+	/* ---- settings: backup & restore ---- */
+	'.sbm-backup{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.2fr);gap:20px;align-items:start}',
+	'.sbm-backup-export{display:grid;gap:8px;justify-items:start}',
+	'.sbm-backup-export p{margin:0}',
+	'.sbm-drop{display:grid;gap:4px;place-items:center;text-align:center;padding:22px 16px;border:2px dashed var(--border-color-medium);border-radius:12px;background:var(--background-color-low);cursor:pointer;transition:border-color .15s,background .15s}',
+	'.sbm-drop span{font-size:12px;color:var(--text-color-medium)}',
+	'.sbm-drop:hover,.sbm-drop:focus-visible,.sbm-drop.sbm-over{border-color:#2271b1;background:rgba(34,113,177,.06);outline:none}',
+	'@media(max-width:760px){.sbm-backup{grid-template-columns:1fr}}',
+
 	/* ---- dashboard: exit path ---- */
 	'.sbm-path{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(240px,1fr);gap:16px;align-items:start}',
 	'.sbm-hops{display:flex;flex-wrap:wrap;align-items:center;gap:8px}',

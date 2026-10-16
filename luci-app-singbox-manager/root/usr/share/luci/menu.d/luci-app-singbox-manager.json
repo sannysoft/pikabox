@@ -77,5 +77,13 @@
 			"type": "view",
 			"path": "singbox-manager/network"
 		}
+	},
+	"admin/services/singbox-manager/settings": {
+		"title": "Settings",
+		"order": 90,
+		"action": {
+			"type": "view",
+			"path": "singbox-manager/settings"
+		}
 	}
 }

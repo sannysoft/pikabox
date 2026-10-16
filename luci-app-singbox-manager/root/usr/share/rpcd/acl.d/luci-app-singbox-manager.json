@@ -16,6 +16,7 @@
 					"routing",
 					"rule_groups",
 					"runtime_stats",
+					"settings",
 					"status",
 					"subscription_outbounds",
 					"subscriptions",
@@ -30,7 +31,10 @@
 		"write": {
 			"ubus": {
 				"singbox.manager": [
+					"backup_read",
 					"cleanup",
+					"config_export",
+					"config_import",
 					"connection_close",
 					"dns_rule_delete",
 					"dns_rule_set",
