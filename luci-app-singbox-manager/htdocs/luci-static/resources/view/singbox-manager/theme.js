@@ -202,6 +202,33 @@ var CSS = [
 	'.sbm-spark svg{display:block;width:100%;height:100%}',
 	'.sbm-card.sbm-down{border-color:rgba(180,35,24,.45)}',
 
+	/* ---- dashboard: health graph (routes → groups → sources → servers) ---- */
+	'.sbm-graph-scroll{overflow-x:auto;padding-bottom:4px}',
+	'.sbm-graph{position:relative;display:flex;gap:56px;align-items:flex-start;min-width:max-content;padding:4px 2px}',
+	'.sbm-graph>svg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible}',
+	'.sbm-col{position:relative;z-index:1;display:flex;flex-direction:column;gap:10px;width:220px}',
+	'.sbm-col:last-child{width:280px}',
+	'.sbm-col-title{font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--text-color-medium);margin-bottom:2px}',
+	'.sbm-node{display:grid;gap:4px;padding:8px 10px;border:1px solid var(--border-color-medium);border-radius:10px;background:var(--background-color-high)}',
+	'.sbm-node-head{display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:0}',
+	'.sbm-node-head .sbm-pill{min-width:0}',
+	'.sbm-node-ms{font-size:13px;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}',
+	'.sbm-node-ms.down{color:#b42318}',
+	'.sbm-node-ms.idle{color:var(--text-color-medium);font-weight:600}',
+	'.sbm-node-foot{font-size:11px;color:var(--text-color-medium);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+	'.sbm-node.sbm-down{border-color:rgba(180,35,24,.5)}',
+	'.sbm-node.sbm-live{border-color:#2271b1;box-shadow:0 0 0 1px #2271b1 inset}',
+	'.sbm-node.sbm-unused{opacity:.55;border-style:dashed}',
+	'.sbm-node.sbm-rule{background:var(--background-color-low)}',
+	'.sbm-node .sbm-spark{height:16px}',
+	'.sbm-edge{fill:none;stroke:var(--border-color-strong,#b5bac1);stroke-width:1.2}',
+	'.sbm-edge.sbm-on{stroke:#2271b1;stroke-width:2.4}',
+	'.sbm-edge.sbm-dead{stroke:#d9534f;stroke-dasharray:4 4;opacity:.7}',
+	'.sbm-graph-legend{display:flex;gap:16px;flex-wrap:wrap;font-size:11px;color:var(--text-color-medium)}',
+	'.sbm-graph-legend i{display:inline-block;width:22px;height:0;margin-right:6px;vertical-align:middle;border-top:2px solid #2271b1}',
+	'.sbm-graph-legend i.sbm-l-dead{border-top:2px dashed #d9534f}',
+	'.sbm-graph-legend i.sbm-l-idle{border-top:1px solid #b5bac1}',
+
 	/* ---- dashboard: connections ---- */
 	'.sbm-conn-tools{display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap}',
 	'.sbm-conn-stats{display:flex;gap:14px;font-size:12px;color:var(--text-color-medium);font-variant-numeric:tabular-nums}',
@@ -497,7 +524,7 @@ return baseclass.extend({
 		var cls = kind === 'builtin' ? (name === 'block' ? 'block' : 'direct') : (kind || 'missing');
 		return E('span', { 'class': 'sbm-pill sbm-k-' + cls, 'title': title || '' }, [
 			String(name),
-			(kind && kind !== 'builtin') ? E('small', {}, [ kind === 'subscription' ? _('sub') : kind ]) : ''
+			(kind && kind !== 'builtin' && kind !== 'rule') ? E('small', {}, [ kind === 'subscription' ? _('sub') : kind ]) : ''
 		]);
 	},
 

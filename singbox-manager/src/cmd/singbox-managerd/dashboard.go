@@ -225,7 +225,163 @@ func healthRPC(configPath string, _ json.RawMessage) map[string]any {
 		warnings = append(warnings, warning{"warn", "Rule-set not downloaded", rawURL + ": " + message, "rules"})
 	}
 	ruleSetErrMu.Unlock()
-	return ok("items", items, "warnings", warnings, "events", recentEvents(12))
+	nodes, edges := healthGraph(cfg, plan, items, proxies, results)
+	return ok("items", items, "warnings", warnings, "events", recentEvents(12), "nodes", nodes, "edges", edges)
+}
+
+// ---- health graph ----
+
+type graphNode struct {
+	healthItem
+	Column int  `json:"column"`
+	Unused bool `json:"unused,omitempty"` // no route reaches it
+	More   int  `json:"more,omitempty"`   // subscription: alive candidates not in use
+}
+
+type graphEdge struct {
+	From   string `json:"from"`
+	To     string `json:"to"`
+	Active bool   `json:"active,omitempty"` // the parent currently uses this child
+}
+
+// healthGraph lays the outbound graph out in columns: routes (column 0) →
+// groups → subscriptions/outbounds → the subscription servers in use. A node
+// sits one column right of its deepest parent, so shared members appear once
+// with several incoming edges.
+func healthGraph(cfg *managerconfig.Config, plan render.Plan, items []healthItem, proxies map[string]clashProxy, results map[string]managerconfig.ProbeResult) ([]graphNode, []graphEdge) {
+	byID := map[string]*graphNode{}
+	var order []string
+	add := func(node graphNode) *graphNode {
+		if existing, seen := byID[node.ID]; seen {
+			return existing
+		}
+		byID[node.ID] = &node
+		order = append(order, node.ID)
+		return &node
+	}
+	for _, item := range items {
+		add(graphNode{healthItem: item})
+	}
+	var edges []graphEdge
+	children := map[string][]string{}
+	link := func(from, to string, active bool) {
+		edges = append(edges, graphEdge{From: from, To: to, Active: active})
+		children[from] = append(children[from], to)
+	}
+	builtin := func(id string) {
+		add(graphNode{healthItem: healthItem{ID: id, Name: id, Kind: "builtin", Health: "ok"}})
+	}
+
+	// Column 0: what sends traffic somewhere.
+	running := managedRuntimePID(runtime.DefaultPaths) > 0
+	final := plan.Final(*cfg)
+	var roots []string
+	for _, route := range cfg.Routes {
+		name := route.RuleGroup
+		if group, found := cfg.RuleGroups[route.RuleGroup]; found && group.Name != "" {
+			name = group.Name
+		}
+		root := "route:" + route.ID
+		node := add(graphNode{healthItem: healthItem{ID: root, Name: name, Kind: "rule", Health: "ok"}})
+		if !route.Enabled {
+			node.Health = "idle"
+		}
+		roots = append(roots, root)
+		if route.Outbound == "direct" || route.Outbound == "block" {
+			builtin(route.Outbound)
+		}
+		link(root, route.Outbound, false)
+	}
+	add(graphNode{healthItem: healthItem{ID: "route:final", Name: "Everything else", Kind: "rule", Health: "ok"}})
+	roots = append(roots, "route:final")
+	if final == "direct" || final == "block" {
+		builtin(final)
+	}
+	link("route:final", final, running)
+
+	for _, id := range sortedIDs(cfg.OutboundGroups) {
+		for _, member := range cfg.OutboundGroups[id].Members {
+			if member == "direct" || member == "block" {
+				builtin(member)
+			}
+			link(id, member, running && proxies[id].Now == member)
+		}
+	}
+	// Subscriptions fan out to the servers they currently use.
+	for _, id := range sortedIDs(cfg.Subscriptions) {
+		state := managerconfig.LoadSubscriptionState(id)
+		names := map[string]string{}
+		for _, candidate := range state.Candidates {
+			names[candidate.ID] = candidate.Name
+		}
+		selected := map[string]bool{}
+		for _, tag := range state.Selected {
+			selected[tag] = true
+			result := results[tag]
+			add(graphNode{healthItem: healthItem{ID: tag, Name: names[tag], Kind: "server", Health: firstNonEmptyString(result.Health, "unknown"), LatencyMS: result.LatencyMS, Error: result.Error}})
+			link(id, tag, running && proxies[id].Now == tag)
+		}
+		if node, found := byID[id]; found {
+			for _, tag := range state.Matched {
+				if !selected[tag] && results[tag].Health == "ok" {
+					node.More++
+				}
+			}
+		}
+	}
+
+	// Columns: longest path from the roots; reachability marks unused nodes.
+	column := map[string]int{}
+	reached := map[string]bool{}
+	var walk func(id string, depth int, onPath map[string]bool)
+	walk = func(id string, depth int, onPath map[string]bool) {
+		if onPath[id] {
+			return // cycles are rejected by validation; never loop here
+		}
+		reached[id] = true
+		if depth > column[id] || column[id] == 0 {
+			column[id] = depth
+		}
+		onPath[id] = true
+		for _, child := range children[id] {
+			walk(child, depth+1, onPath)
+		}
+		delete(onPath, id)
+	}
+	for _, root := range roots {
+		walk(root, 0, map[string]bool{})
+	}
+	// Unreached nodes keep their structure: one right of their deepest parent.
+	for changed := true; changed; {
+		changed = false
+		for _, edge := range edges {
+			if reached[edge.To] {
+				continue
+			}
+			if want := column[edge.From] + 1; column[edge.To] < want {
+				column[edge.To] = want
+				changed = true
+			}
+		}
+	}
+	nodes := make([]graphNode, 0, len(order))
+	for _, id := range order {
+		node := *byID[id]
+		node.Column = column[id]
+		if node.Column == 0 && node.Kind != "rule" {
+			node.Column = 1
+		}
+		node.Unused = !reached[id]
+		nodes = append(nodes, node)
+	}
+	// Drop edges whose target never became a node (a missing member).
+	kept := edges[:0]
+	for _, edge := range edges {
+		if byID[edge.To] != nil {
+			kept = append(kept, edge)
+		}
+	}
+	return nodes, kept
 }
 
 // ---- connections ----

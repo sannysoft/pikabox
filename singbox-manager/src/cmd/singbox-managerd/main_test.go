@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	managerconfig "github.com/openwrt-singbox/singbox-manager/internal/config"
+	"github.com/openwrt-singbox/singbox-manager/internal/render"
 )
 
 func TestCmdlineHasArgMatchesExactRuntimeConfig(t *testing.T) {
@@ -139,6 +140,50 @@ func TestSameSet(t *testing.T) {
 	for _, tc := range cases {
 		if got := sameSet(tc.a, tc.b); got != tc.want {
 			t.Errorf("sameSet(%v, %v) = %v, want %v", tc.a, tc.b, got, tc.want)
+		}
+	}
+}
+
+func TestHealthGraphColumnsAndEdges(t *testing.T) {
+	managerconfig.StateDir, managerconfig.RunDir = t.TempDir(), t.TempDir()
+	cfg := managerconfig.DefaultConfig()
+	cfg.Manager.Final = "main"
+	cfg.Outbounds["a"] = managerconfig.Outbound{ID: "a", Enabled: true, Name: "a", Source: `{"type":"socks","server":"1.2.3.4","server_port":1080}`}
+	cfg.Outbounds["spare"] = managerconfig.Outbound{ID: "spare", Enabled: true, Name: "spare", Source: `{"type":"socks","server":"1.2.3.5","server_port":1080}`}
+	cfg.Subscriptions["s"] = managerconfig.Subscription{ID: "s", Enabled: true, Name: "s", URL: "https://e/s", Format: "auto"}
+	cfg.OutboundGroups["main"] = managerconfig.OutboundGroup{ID: "main", Enabled: true, Name: "main", Mode: "fallback", Members: []string{"a", "s"}}
+	cfg.RuleGroups["ru"] = managerconfig.RuleGroup{ID: "ru", Enabled: true, Name: "ru", Rules: []string{"domain_suffix:ru"}}
+	cfg.Routes = []managerconfig.Route{{ID: "route_1", Enabled: true, RuleGroup: "ru", Outbound: "a"}}
+	cand := managerconfig.Candidate{ID: "s.x", Name: "srv", Outbound: map[string]any{"type": "socks", "tag": "s.x", "server": "9.9.9.9", "server_port": 1080}}
+	if err := managerconfig.SaveSubscriptionState("s", managerconfig.SubscriptionState{Candidates: []managerconfig.Candidate{cand}, Matched: []string{"s.x"}, Selected: []string{"s.x"}}); err != nil {
+		t.Fatal(err)
+	}
+	plan := render.BuildPlan(cfg)
+	items := []healthItem{{ID: "main", Kind: "group"}, {ID: "s", Kind: "subscription"}, {ID: "a", Kind: "outbound"}, {ID: "spare", Kind: "outbound"}}
+	nodes, edges := healthGraph(&cfg, plan, items, nil, nil)
+	col := map[string]int{}
+	unused := map[string]bool{}
+	for _, n := range nodes {
+		col[n.ID], unused[n.ID] = n.Column, n.Unused
+	}
+	// a is both a route target (column 1) and a member of main (column 2):
+	// it sits at its deepest position, once.
+	want := map[string]int{"route:route_1": 0, "route:final": 0, "main": 1, "a": 2, "s": 2, "s.x": 3}
+	for id, c := range want {
+		if col[id] != c {
+			t.Errorf("%s column = %d, want %d (all: %v)", id, col[id], c, col)
+		}
+	}
+	if !unused["spare"] || unused["a"] || unused["s.x"] {
+		t.Errorf("only spare is unreachable from routes: %v", unused)
+	}
+	links := map[string]bool{}
+	for _, e := range edges {
+		links[e.From+">"+e.To] = true
+	}
+	for _, l := range []string{"route:route_1>a", "route:final>main", "main>a", "main>s", "s>s.x"} {
+		if !links[l] {
+			t.Errorf("missing edge %s in %v", l, links)
 		}
 	}
 }

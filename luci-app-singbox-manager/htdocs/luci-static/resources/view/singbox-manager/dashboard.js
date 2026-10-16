@@ -417,29 +417,131 @@ function sparkSmall(points) {
 	return box;
 }
 
-function healthCard(item) {
+var COLUMN_TITLES = [ _('Routes'), _('Targets'), _('Members'), _('Servers'), _('Servers') ];
+
+function graphNode(node, live) {
+	var down = node.health === 'down' || node.health === 'error';
 	var ms;
-	if (item.health === 'ok' && item.latency_ms)
-		ms = E('div', { 'class': 'sbm-card-ms' }, [ String(item.latency_ms), E('small', {}, [ 'ms' ]) ]);
-	else if (item.health === 'idle')
-		ms = E('div', { 'class': 'sbm-card-ms idle' }, [ _('off') ]);
-	else if (item.health === 'unknown')
-		ms = E('div', { 'class': 'sbm-card-ms idle' }, [ _('not tested') ]);
+	if (node.kind === 'rule')
+		ms = node.health === 'idle' ? E('span', { 'class': 'sbm-node-ms idle' }, [ _('off') ]) : '';
+	else if (node.kind === 'builtin')
+		ms = '';
+	else if (node.health === 'ok' && node.latency_ms)
+		ms = E('span', { 'class': 'sbm-node-ms' }, [ node.latency_ms + ' ms' ]);
+	else if (node.health === 'idle')
+		ms = E('span', { 'class': 'sbm-node-ms idle' }, [ _('off') ]);
+	else if (node.health === 'unknown')
+		ms = E('span', { 'class': 'sbm-node-ms idle' }, [ '—' ]);
 	else
-		ms = E('div', { 'class': 'sbm-card-ms down', 'title': item.error || '' }, [ item.health === 'error' ? _('error') : _('down') ]);
-	var foot = item.now ? _('using %s').format(item.now) : (item.detail || '');
-	var since = item.health === 'ok' ? '' : (item.last_ok ? _('ok %s').format(ago(item.last_ok)) : (item.error ? item.error : ''));
-	return E('div', { 'class': 'sbm-card' + (item.health === 'down' || item.health === 'error' ? ' sbm-down' : ''), 'title': item.error || '' }, [
-		E('div', { 'class': 'sbm-card-head' }, [ theme.pill(item.name, item.kind), ms ]),
-		sparkSmall(item.history),
-		(foot || since) ? E('div', { 'class': 'sbm-card-foot' }, [ E('span', {}, [ foot ]), E('span', { 'title': since }, [ since ]) ]) : ''
+		ms = E('span', { 'class': 'sbm-node-ms down' }, [ node.health === 'error' ? _('error') : _('down') ]);
+
+	var foot = node.detail || '';
+	if (node.kind === 'group')
+		foot = (node.detail === 'fallback' ? _('first alive') : _('fastest')) + (node.now ? ' · ' + _('using %s').format(node.now) : '');
+	if (node.more)
+		foot = (foot ? foot + ' · ' : '') + _('+%d alive standby').format(node.more);
+	if (down && !node.last_ok)
+		foot = node.error || foot;
+	else if (down)
+		foot = _('ok %s').format(ago(node.last_ok));
+	if (node.unused)
+		foot = _('not used by any route');
+
+	var kind = node.kind === 'server' ? 'subscription' : node.kind;
+	var cls = 'sbm-node' + (down ? ' sbm-down' : '') + (live ? ' sbm-live' : '') + (node.unused ? ' sbm-unused' : '') + (node.kind === 'rule' ? ' sbm-rule' : '');
+	return E('div', { 'class': cls, 'data-node': node.id, 'title': node.error || '' }, [
+		E('div', { 'class': 'sbm-node-head' }, [ theme.pill(node.name || node.id, node.kind === 'builtin' ? 'builtin' : kind, node.name), ms ]),
+		(node.history && node.history.length > 1 && node.kind !== 'rule') ? sparkSmall(node.history) : '',
+		foot ? E('div', { 'class': 'sbm-node-foot', 'title': foot }, [ foot ]) : ''
+	]);
+}
+
+// drawEdges connects parent → member with curves from the measured card
+// positions; the path traffic takes right now is drawn bold.
+function drawEdges(graph, edges, byId, live) {
+	var svg = graph.querySelector('svg');
+	if (!svg || !graph.isConnected)
+		return;
+	var box = graph.getBoundingClientRect();
+	var paths = [];
+	edges.forEach(function(edge) {
+		var a = graph.querySelector('[data-node="' + CSS.escape(edge.from) + '"]');
+		var b = graph.querySelector('[data-node="' + CSS.escape(edge.to) + '"]');
+		if (!a || !b)
+			return;
+		var ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect();
+		var x1 = ra.right - box.left, y1 = ra.top + ra.height / 2 - box.top;
+		var x2 = rb.left - box.left, y2 = rb.top + rb.height / 2 - box.top;
+		var dx = Math.max(24, (x2 - x1) / 2);
+		var target = byId[edge.to] || {};
+		var on = edge.active && live[edge.from];
+		var cls = 'sbm-edge' + (on ? ' sbm-on' : '') + ((target.health === 'down' || target.health === 'error') ? ' sbm-dead' : '');
+		paths.push({ cls: cls, active: on, d: 'M' + x1.toFixed(1) + ',' + y1.toFixed(1) + ' C' + (x1 + dx).toFixed(1) + ',' + y1.toFixed(1) + ' ' + (x2 - dx).toFixed(1) + ',' + y2.toFixed(1) + ' ' + x2.toFixed(1) + ',' + y2.toFixed(1) });
+	});
+	// Active edges last so they paint on top.
+	paths.sort(function(p, q) { return (p.active ? 1 : 0) - (q.active ? 1 : 0); });
+	svg.innerHTML = paths.map(function(p) { return '<path class="' + p.cls + '" d="' + p.d + '"/>'; }).join('');
+}
+
+function renderGraph(data) {
+	var nodes = data.nodes || [];
+	var edges = data.edges || [];
+	var byId = {};
+	nodes.forEach(function(n) { byId[n.id] = n; });
+
+	// Live nodes: everything reachable from the default route through active edges.
+	var live = {};
+	var activeFrom = {};
+	edges.forEach(function(e) { if (e.active) (activeFrom[e.from] = activeFrom[e.from] || []).push(e.to); });
+	(function mark(id) {
+		if (live[id])
+			return;
+		live[id] = true;
+		(activeFrom[id] || []).forEach(mark);
+	})('route:final');
+
+	// Order each column by the average position of its parents (fewer crossings).
+	var columns = [];
+	nodes.forEach(function(n) { (columns[n.column] = columns[n.column] || []).push(n); });
+	var position = {};
+	var parentsOf = {};
+	edges.forEach(function(e) { (parentsOf[e.to] = parentsOf[e.to] || []).push(e.from); });
+	columns.forEach(function(col, c) {
+		if (!col)
+			return;
+		if (c > 0) {
+			col.forEach(function(n) {
+				var ps = (parentsOf[n.id] || []).filter(function(p) { return position[p] !== undefined; });
+				n._rank = ps.length ? ps.reduce(function(sum, p) { return sum + position[p]; }, 0) / ps.length : 1e6;
+			});
+			col.sort(function(a, b) { return a._rank - b._rank; });
+		}
+		col.forEach(function(n, i) { position[n.id] = i; });
+	});
+
+	var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+	svg.setAttribute('aria-hidden', 'true');
+	var graph = E('div', { 'class': 'sbm-graph' }, [ svg ].concat(columns.filter(Boolean).map(function(col, i) {
+		return E('div', { 'class': 'sbm-col' }, [ E('div', { 'class': 'sbm-col-title' }, [ COLUMN_TITLES[col[0].column] || '' ]) ].concat(col.map(function(n) { return graphNode(n, live[n.id] && n.kind !== 'rule'); })));
+	})));
+
+	var redraw = function() { drawEdges(graph, edges, byId, live); };
+	if (window.ResizeObserver)
+		new ResizeObserver(redraw).observe(graph);
+	window.setTimeout(redraw, 0);
+	return E('div', {}, [
+		E('div', { 'class': 'sbm-graph-scroll' }, graph),
+		E('div', { 'class': 'sbm-graph-legend' }, [
+			E('span', {}, [ E('i'), _('carrying traffic now') ]),
+			E('span', {}, [ E('i', { 'class': 'sbm-l-idle' }), _('member') ]),
+			E('span', {}, [ E('i', { 'class': 'sbm-l-dead' }), _('member is down') ])
+		])
 	]);
 }
 
 function renderHealth(view, data) {
 	data = data || {};
 	var warnings = data.warnings || [];
-	var items = data.items || [];
 	var base = L.url('admin/services/singbox-manager');
 	return E('div', { 'class': 'singbox-manager-section sbm-health' }, [
 		E('div', { 'class': 'singbox-manager-section-header' }, [
@@ -458,7 +560,7 @@ function renderHealth(view, data) {
 				w.page && w.page !== 'dashboard' ? E('a', { 'href': base + '/' + w.page }, [ _('Open') + ' →' ]) : ''
 			]);
 		})) : '',
-		items.length ? E('div', { 'class': 'sbm-board' }, items.map(healthCard))
+		(data.nodes || []).length > 1 ? renderGraph(data)
 			: E('div', { 'class': 'sbm-empty' }, [ _('Nothing to monitor yet — add an outbound or a subscription.') ])
 	]);
 }
