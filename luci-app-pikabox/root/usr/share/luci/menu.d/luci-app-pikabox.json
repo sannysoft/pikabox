@@ -1,0 +1,89 @@
+{
+	"admin/services/pikabox": {
+		"title": "Pika-box",
+		"order": 60,
+		"action": {
+			"type": "firstchild"
+		},
+		"depends": {
+			"acl": [
+				"luci-app-pikabox"
+			],
+			"uci": {
+				"pikabox": true
+			}
+		}
+	},
+	"admin/services/pikabox/dashboard": {
+		"title": "Dashboard",
+		"order": 10,
+		"action": {
+			"type": "view",
+			"path": "pikabox/dashboard"
+		}
+	},
+	"admin/services/pikabox/outbounds": {
+		"title": "Outbounds",
+		"order": 20,
+		"action": {
+			"type": "view",
+			"path": "pikabox/outbounds"
+		}
+	},
+	"admin/services/pikabox/subscriptions": {
+		"title": "Subscriptions",
+		"order": 30,
+		"action": {
+			"type": "view",
+			"path": "pikabox/subscriptions"
+		}
+	},
+	"admin/services/pikabox/groups": {
+		"title": "Outbound Groups",
+		"order": 40,
+		"action": {
+			"type": "view",
+			"path": "pikabox/groups"
+		}
+	},
+	"admin/services/pikabox/rules": {
+		"title": "Rule Groups",
+		"order": 50,
+		"action": {
+			"type": "view",
+			"path": "pikabox/rules"
+		}
+	},
+	"admin/services/pikabox/routing": {
+		"title": "Routing",
+		"order": 60,
+		"action": {
+			"type": "view",
+			"path": "pikabox/routing"
+		}
+	},
+	"admin/services/pikabox/dns": {
+		"title": "DNS",
+		"order": 70,
+		"action": {
+			"type": "view",
+			"path": "pikabox/dns"
+		}
+	},
+	"admin/services/pikabox/network": {
+		"title": "Network",
+		"order": 80,
+		"action": {
+			"type": "view",
+			"path": "pikabox/network"
+		}
+	},
+	"admin/services/pikabox/settings": {
+		"title": "Settings",
+		"order": 90,
+		"action": {
+			"type": "view",
+			"path": "pikabox/settings"
+		}
+	}
+}

@@ -1,15 +1,14 @@
-# openwrt-singbox
+# Pika-box
 
-[![CI](https://github.com/aminmokhtari94/openwrt-singbox/actions/workflows/ci.yml/badge.svg)](https://github.com/aminmokhtari94/openwrt-singbox/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/aminmokhtari94/openwrt-singbox?sort=semver)](https://github.com/aminmokhtari94/openwrt-singbox/releases/latest)
+[![CI](https://github.com/sannysoft/openwrt-singbox/actions/workflows/ci.yml/badge.svg)](https://github.com/sannysoft/openwrt-singbox/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/sannysoft/openwrt-singbox?sort=semver)](https://github.com/sannysoft/openwrt-singbox/releases/latest)
 
-An OpenWrt-native manager for [sing-box](https://sing-box.sagernet.org/): a small Go
-daemon plus a LuCI web app that turn `sing-box` into a first-class OpenWrt service —
-configured through UCI, exposed over `rpcd`/`ubus`, and driven from a five-page LuCI UI.
-
-It manages subscriptions and node groups, DNS, routing rules and rule-sets, and a
-transparent (TProxy) gateway with per-device overrides — without hand-editing
-`sing-box` JSON.
+**Pika-box** is a router-side manager for [sing-box](https://sing-box.sagernet.org/) on
+OpenWrt: a small Go daemon (`pikaboxd`) plus a LuCI app. You describe *what* goes *where*
+— outbounds, filtered subscriptions, outbound groups, rule groups and an ordered route
+list — and Pika-box fetches, filters and delay-tests servers, picks the fastest, keeps
+fallback groups on the first live member, and renders a sing-box config from it. Settings
+live in UCI (`/etc/config/pikabox`) and are exposed over `ubus call pikabox …`.
 
 ## Features
 
@@ -35,7 +34,7 @@ transparent (TProxy) gateway with per-device overrides — without hand-editing
 Targets OpenWrt 25.12+ with the feed's sing-box (1.13.x; renders no legacy fields —
 sniffing is a route action).
 
-### Config model (`/etc/config/singbox-manager`)
+### Config model (`/etc/config/pikabox`)
 
 ```
 config outbound 'vp1'
@@ -60,7 +59,7 @@ config manager 'main'
 ```
 
 Subscription candidates and their top-N selection live in
-`/etc/singbox-manager/state/`; latency results in `/var/run/singbox-manager/probe.json`.
+`/etc/pikabox/state/`; latency results in `/var/run/pikabox/probe.json`.
 
 ## Screenshots
 
@@ -80,20 +79,20 @@ Subscription candidates and their top-N selection live in
 
 | Path | What it is |
 | --- | --- |
-| `singbox-manager/` | The `singbox-managerd` Go daemon + OpenWrt package (Makefile, UCI config, init script). |
-| `luci-app-singbox-manager/` | LuCI web app (Dashboard, Nodes, DNS, Routing, Network). |
+| `pikabox/` | The `pikaboxd` Go daemon + OpenWrt package (Makefile, UCI config, init script). |
+| `luci-app-pikabox/` | LuCI web app (Dashboard, Nodes, DNS, Routing, Network). |
 | `Makefile` | Top-level dev/build orchestration: Go tests, SDK download, package builds, QEMU test lab. |
 | `flake.nix` | Nix dev shell with the full toolchain (Go, QEMU, OpenWrt SDK prerequisites). |
 
 ### How it works
 
-`singbox-managerd` runs three roles from one binary:
+`pikaboxd` runs three roles from one binary:
 
 - `serve` — the long-running procd service. It reconciles the UCI config into a generated
   `sing-box` config, supervises the `sing-box` process, and programs the nftables TProxy
   include and fwmark policy routing.
-- `rpcd` — the `rpcd`/`ubus` plugin (symlinked as `/usr/libexec/rpcd/singbox.manager`) that
-  backs the LuCI UI and `ubus call singbox.manager …`.
+- `rpcd` — the `rpcd`/`ubus` plugin (symlinked as `/usr/libexec/rpcd/pikabox`) that
+  backs the LuCI UI and `ubus call pikabox …`.
 - `cleanup` — tears down the nftables include and policy routing (run on service stop).
 
 ## Install
@@ -110,17 +109,17 @@ selects it automatically — just paste:
 
 ```sh
 # 1. Trust the feed signing key (one time)
-wget -O /etc/apk/keys/openwrt-singbox.pem \
-  https://aminmokhtari94.github.io/openwrt-singbox/openwrt-singbox.pem
+wget -O /etc/apk/keys/pikabox.pem \
+  https://sannysoft.github.io/openwrt-singbox/pikabox.pem
 
 # 2. Add the feed. The line points at the packages.adb index file itself, and
 #    lives in repositories.d/ alongside OpenWrt's own distfeeds.list.
-echo "https://aminmokhtari94.github.io/openwrt-singbox/packages/openwrt-25.12/$(cat /etc/apk/arch)/packages.adb" \
-  > /etc/apk/repositories.d/openwrt-singbox.list
+echo "https://sannysoft.github.io/openwrt-singbox/packages/openwrt-25.12/$(cat /etc/apk/arch)/packages.adb" \
+  > /etc/apk/repositories.d/pikabox.list
 
 # 3. Install
 apk update
-apk add singbox-manager luci-app-singbox-manager
+apk add pikabox luci-app-pikabox
 ```
 
 > Prebuilt feeds currently cover x86/64 (`x86_64`), armsr/armv8 (`aarch64_generic`),
@@ -137,35 +136,35 @@ apk add singbox-manager luci-app-singbox-manager
 
 24.10 uses `opkg`, which the project does not publish a feed for. Download the
 matching `.ipk` files from the
-[Releases](https://github.com/aminmokhtari94/openwrt-singbox/releases/latest) page and
+[Releases](https://github.com/sannysoft/openwrt-singbox/releases/latest) page and
 install them with `opkg`:
 
 ```sh
 # pick the daemon matching your device's architecture
 opkg install \
-  ./singbox-manager_24.10_x86_64.ipk \
-  ./luci-app-singbox-manager_24.10.ipk
+  ./pikabox_24.10_x86_64.ipk \
+  ./luci-app-pikabox_24.10.ipk
 ```
 
 ### Manual release installation (25.12)
 
 You can also download `.apk` files from the
-[Releases](https://github.com/aminmokhtari94/openwrt-singbox/releases/latest) page
+[Releases](https://github.com/sannysoft/openwrt-singbox/releases/latest) page
 instead of using the feed. Each release ships, per series (`24.10`, `25.12`):
 
-- `singbox-manager_<series>_<arch>.{apk,ipk}` — the daemon, one per architecture
+- `pikabox_<series>_<arch>.{apk,ipk}` — the daemon, one per architecture
   (`x86_64`, `aarch64`, `armv7`, `mipsel`)
-- `luci-app-singbox-manager_<series>.{apk,ipk}` — the web UI (architecture-independent)
+- `luci-app-pikabox_<series>.{apk,ipk}` — the web UI (architecture-independent)
 
 ```sh
 # pick the daemon matching your device's architecture
 apk add --allow-untrusted \
-  ./singbox-manager_25.12_x86_64.apk \
-  ./luci-app-singbox-manager_25.12.apk
+  ./pikabox_25.12_x86_64.apk \
+  ./luci-app-pikabox_25.12.apk
 ```
 
-After installing, open **LuCI → Services → SingBox Manager**. Configuration lives in
-`/etc/config/singbox-manager`.
+After installing, open **LuCI → Services → Pika-box**. Configuration lives in
+`/etc/config/pikabox`.
 
 > On OpenWrt releases older than 24.10 there are no prebuilt packages; build for your
 > target with `make ipk-<arch> OPENWRT_VERSION=<release>` and install the resulting
@@ -213,7 +212,7 @@ make ipk OPENWRT_TARGET_PATH=ath79/generic OPENWRT_VERSION=24.10.7
 
 ```sh
 make test     # run the Go test suite
-make build    # build the daemon locally to /tmp/singbox-managerd
+make build    # build the daemon locally to /tmp/pikaboxd
 make smoke    # local rpcd smoke checks (list + status)
 make help     # list all targets
 ```
@@ -242,7 +241,7 @@ make undeploy          # remove packages and wipe leftover state
   packages for OpenWrt 24.10 and 25.12 across all architectures via the SDK, publishes
   them as a GitHub Release, and publishes the signed self-hosted `apk` feed (25.12) to
   GitHub Pages. The feed index (`packages.adb`) is signed with the EC key stored in the
-  `APK_SIGN_KEY` repository secret; its public half is `apk/openwrt-singbox.pem`.
+  `APK_SIGN_KEY` repository secret; its public half is `apk/pikabox.pem`.
 
 Cut a release:
 

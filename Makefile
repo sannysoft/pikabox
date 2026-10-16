@@ -3,21 +3,21 @@ SHELL := /usr/bin/env bash
 # ---------------------------------------------------------------------------
 # Package version
 #
-# Stamped into the singbox-manager/luci .ipk/.apk so each release supersedes the
+# Stamped into the pikabox/luci .ipk/.apk so each release supersedes the
 # installed package (otherwise PKG_VERSION stays 0.1.0 and OpenWrt offers no
 # upgrade). Derived from the latest git tag (release checkouts are on a `vX.Y.Z`
 # tag), with the leading `v` stripped. Exported so the SDK sub-make and the
 # package Makefiles pick it up; override on the CLI for one-off builds.
 # ---------------------------------------------------------------------------
-SINGBOX_PKG_VERSION ?= $(patsubst v%,%,$(shell git describe --tags --abbrev=0 2>/dev/null || echo 0.0.0))
-export SINGBOX_PKG_VERSION
+PIKABOX_PKG_VERSION ?= $(patsubst v%,%,$(shell git describe --tags --abbrev=0 2>/dev/null || echo 0.0.0))
+export PIKABOX_PKG_VERSION
 
 # ---------------------------------------------------------------------------
 # Go daemon (host build / tests)
 # ---------------------------------------------------------------------------
-GO_SRC := singbox-manager/src
-GOCACHE ?= /tmp/singbox-manager-go-build
-DAEMON_OUT ?= /tmp/singbox-managerd
+GO_SRC := pikabox/src
+GOCACHE ?= /tmp/pikabox-go-build
+DAEMON_OUT ?= /tmp/pikaboxd
 
 # ---------------------------------------------------------------------------
 # OpenWrt release coordinates
@@ -81,7 +81,7 @@ DEFAULT_OPENWRT_SDK := $(SDK_DIR)/$(OPENWRT_SDK_NAME)
 OPENWRT_SDK ?= $(DEFAULT_OPENWRT_SDK)
 DEFAULT_OPENWRT_SDK_ABSPATH := $(abspath $(DEFAULT_OPENWRT_SDK))
 OPENWRT_SDK_ABSPATH := $(abspath $(OPENWRT_SDK))
-OPENWRT_SDK_PACKAGE_DIR = $(OPENWRT_SDK)/package/openwrt-singbox
+OPENWRT_SDK_PACKAGE_DIR = $(OPENWRT_SDK)/package/pikabox
 OPENWRT_SDK_GOLANG_PACKAGE_MK = $(OPENWRT_SDK)/feeds/packages/lang/golang/golang-package.mk
 OPENWRT_SDK_LUCI_MK = $(OPENWRT_SDK)/feeds/luci/luci.mk
 OPENWRT_SDK_SING_BOX_MAKEFILE = $(OPENWRT_SDK)/package/feeds/packages/sing-box/Makefile
@@ -156,7 +156,7 @@ help:
 	@printf '%s\n' \
 		'targets:' \
 		'  make test       Run Go tests' \
-		'  make build      Build local daemon to /tmp/singbox-managerd' \
+		'  make build      Build local daemon to /tmp/pikaboxd' \
 		'  make sdk        Download/extract the local OpenWrt SDK into .sdk' \
 		'  make ipk        Build packages for OPENWRT_TARGET_PATH=$(OPENWRT_TARGET_PATH) into IPK_DIR=$(IPK_DIR)' \
 		'  make ipk-<arch> Build packages for one arch ($(ARCHS)) into dist/<arch>' \
@@ -179,7 +179,7 @@ test:
 	env GOCACHE=$(GOCACHE) go -C $(GO_SRC) test ./...
 
 build:
-	env GOCACHE=$(GOCACHE) go -C $(GO_SRC) build -buildvcs=false -o $(DAEMON_OUT) ./cmd/singbox-managerd
+	env GOCACHE=$(GOCACHE) go -C $(GO_SRC) build -buildvcs=false -o $(DAEMON_OUT) ./cmd/pikaboxd
 
 smoke: build
 	$(DAEMON_OUT) rpcd list
@@ -220,8 +220,8 @@ sdk ensure-sdk: $(OPENWRT_SDK)/.feeds-installed
 
 sdk-link: ensure-sdk
 	mkdir -p "$(OPENWRT_SDK_PACKAGE_DIR)"
-	ln -sfnT "$(CURDIR)/singbox-manager" "$(OPENWRT_SDK_PACKAGE_DIR)/singbox-manager"
-	ln -sfnT "$(CURDIR)/luci-app-singbox-manager" "$(OPENWRT_SDK_PACKAGE_DIR)/luci-app-singbox-manager"
+	ln -sfnT "$(CURDIR)/pikabox" "$(OPENWRT_SDK_PACKAGE_DIR)/pikabox"
+	ln -sfnT "$(CURDIR)/luci-app-pikabox" "$(OPENWRT_SDK_PACKAGE_DIR)/luci-app-pikabox"
 
 # ---------------------------------------------------------------------------
 # Package build
@@ -275,23 +275,23 @@ ipk build-ipk: sdk-link
 		"$(OPENWRT_SDK)/Config-build.in"
 	$(sdk_config_reset)
 	printf '%s\n' \
-		'CONFIG_PACKAGE_singbox-manager=m' \
-		'CONFIG_PACKAGE_luci-app-singbox-manager=m' \
+		'CONFIG_PACKAGE_pikabox=m' \
+		'CONFIG_PACKAGE_luci-app-pikabox=m' \
 		>> "$(OPENWRT_SDK)/.config"
 	$(MAKE) -C "$(OPENWRT_SDK)" defconfig
 	$(sdk_config_reset)
 	printf '%s\n' \
 		'CONFIG_PACKAGE_sing-box=m' \
-		'CONFIG_PACKAGE_singbox-manager=m' \
-		'CONFIG_PACKAGE_luci-app-singbox-manager=m' \
+		'CONFIG_PACKAGE_pikabox=m' \
+		'CONFIG_PACKAGE_luci-app-pikabox=m' \
 		>> "$(OPENWRT_SDK)/.config"
-	$(MAKE) -C "$(OPENWRT_SDK)" package/singbox-manager/compile package/luci-app-singbox-manager/compile V=s
+	$(MAKE) -C "$(OPENWRT_SDK)" package/pikabox/compile package/luci-app-pikabox/compile V=s
 	mkdir -p "$(IPK_DIR)"
 	find "$(OPENWRT_SDK)/bin/packages" -type f \( \
-		-name 'singbox-manager_*.ipk' -o \
-		-name 'luci-app-singbox-manager_*.ipk' -o \
-		-name 'singbox-manager-*.apk' -o \
-		-name 'luci-app-singbox-manager-*.apk' \
+		-name 'pikabox_*.ipk' -o \
+		-name 'luci-app-pikabox_*.ipk' -o \
+		-name 'pikabox-*.apk' -o \
+		-name 'luci-app-pikabox-*.apk' \
 		\) -exec cp -f {} "$(IPK_DIR)/" \;
 	@test -n "$$(find "$(IPK_DIR)" -maxdepth 1 -type f \( -name '*.ipk' -o -name '*.apk' \) -print -quit)" || { echo "No OpenWrt package artifacts found in $(IPK_DIR)"; exit 1; }
 	@find "$(IPK_DIR)" -maxdepth 1 -type f \( -name '*.ipk' -o -name '*.apk' \) -print | sort
@@ -348,7 +348,7 @@ apk-index:
 	fi; \
 	( cd "$$idx_dir" && "$$apk_bin" mkndx --allow-untrusted $$sign_args --output packages.adb *.apk ); \
 	echo "Wrote $$idx_dir/packages.adb"; \
-	sample="$$(find "$(abspath $(OPENWRT_SDK))/bin/packages" -name 'singbox-manager-*.apk' -print -quit 2>/dev/null)"; \
+	sample="$$(find "$(abspath $(OPENWRT_SDK))/bin/packages" -name 'pikabox-*.apk' -print -quit 2>/dev/null)"; \
 	apk_arch="$$([ -n "$$sample" ] && basename "$$(dirname "$$(dirname "$$sample")")")"; \
 	[ -n "$$apk_arch" ] || { echo "Could not determine apk arch from $(OPENWRT_SDK)/bin/packages"; exit 1; }; \
 	printf '%s\n' "$$apk_arch" > "$$idx_dir/apk-arch"; \
@@ -558,7 +558,7 @@ proxy-test-help:
 		'  http_proxy=http://$(VM_GUEST_IP):2080 wget -O- http://example.com/' \
 		'  nslookup example.com $(VM_GUEST_IP)' \
 		'' \
-		'For explicit proxy testing, singbox-manager listens on 0.0.0.0:2080 by default.' \
+		'For explicit proxy testing, pikabox listens on 0.0.0.0:2080 by default.' \
 		'For transparent proxy testing, enable TProxy for $(VM_LAN_DEVICE) and run plain wget/curl from Alpine.'
 
 # ---------------------------------------------------------------------------
@@ -570,13 +570,13 @@ deploy:
 	$(VM_SSH) 'if command -v apk >/dev/null 2>&1; then apk add --allow-untrusted --force-overwrite --force-reinstall --upgrade /tmp/*.apk; elif command -v opkg >/dev/null 2>&1; then opkg install --force-reinstall /tmp/*.ipk; else echo "No OpenWrt package manager found"; exit 1; fi'
 	$(VM_SSH) 'rm -f /tmp/luci-indexcache.*; rm -rf /tmp/luci-modulecache/; [ ! -x /etc/init.d/rpcd ] || /etc/init.d/rpcd restart; [ ! -x /etc/init.d/uhttpd ] || /etc/init.d/uhttpd restart'
 
-# undeploy stops the daemon (its stop runs `singbox-managerd cleanup`, tearing
+# undeploy stops the daemon (its stop runs `pikaboxd cleanup`, tearing
 # down the nftables include and fwmark policy routing), removes both packages,
 # and wipes leftover state — the UCI config conffile, generated/runtime files,
 # the firewall fragment, and any stale tproxy routing — so the next deploy lands
 # on a clean slate. Safe to run when nothing is installed.
 undeploy:
-	$(VM_SSH) '/etc/init.d/singbox-managerd stop 2>/dev/null; if command -v apk >/dev/null 2>&1; then apk del luci-app-singbox-manager singbox-manager 2>/dev/null; elif command -v opkg >/dev/null 2>&1; then opkg remove luci-app-singbox-manager singbox-manager 2>/dev/null; fi; rm -rf /etc/config/singbox-manager /etc/singbox-manager; rm -f /etc/nftables.d/90-singbox-manager.nft; [ ! -x /etc/init.d/firewall ] || /etc/init.d/firewall reload; for f in -4 -6; do ip $$f rule del fwmark 0x1 lookup 100 2>/dev/null; ip $$f route flush table 100 2>/dev/null; done; true'
+	$(VM_SSH) '/etc/init.d/pikaboxd stop 2>/dev/null; if command -v apk >/dev/null 2>&1; then apk del luci-app-pikabox pikabox 2>/dev/null; elif command -v opkg >/dev/null 2>&1; then opkg remove luci-app-pikabox pikabox 2>/dev/null; fi; rm -rf /etc/config/pikabox /etc/pikabox; rm -f /etc/nftables.d/90-pikabox.nft; [ ! -x /etc/init.d/firewall ] || /etc/init.d/firewall reload; for f in -4 -6; do ip $$f rule del fwmark 0x1 lookup 100 2>/dev/null; ip $$f route flush table 100 2>/dev/null; done; true'
 	$(VM_SSH) 'rm -f /tmp/luci-indexcache.*; rm -rf /tmp/luci-modulecache/; [ ! -x /etc/init.d/rpcd ] || /etc/init.d/rpcd restart; [ ! -x /etc/init.d/uhttpd ] || /etc/init.d/uhttpd restart'
 
 vm-clean:

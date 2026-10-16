@@ -1,0 +1,76 @@
+{
+	"luci-app-pikabox": {
+		"description": "Grant access to Pika-box",
+		"read": {
+			"ubus": {
+				"pikabox": [
+					"connections",
+					"devices",
+					"dns",
+					"filter_preview",
+					"health",
+					"latency_test",
+					"logs",
+					"outbound_groups",
+					"outbounds",
+					"routing",
+					"rule_groups",
+					"runtime_stats",
+					"settings",
+					"status",
+					"subscription_outbounds",
+					"subscriptions",
+					"transparent",
+					"tun"
+				]
+			},
+			"uci": [
+				"pikabox"
+			]
+		},
+		"write": {
+			"ubus": {
+				"pikabox": [
+					"backup_read",
+					"cleanup",
+					"config_export",
+					"config_import",
+					"connection_close",
+					"dns_rule_delete",
+					"dns_rule_set",
+					"dns_server_delete",
+					"dns_server_set",
+					"dns_test",
+					"manager_set_enabled",
+					"manager_set_mode",
+					"manager_set_paused",
+					"outbound_delete",
+					"outbound_group_delete",
+					"outbound_group_set",
+					"outbound_set",
+					"outbound_test",
+					"probe",
+					"reload",
+					"restart",
+					"routing_set",
+					"rule_group_delete",
+					"rule_group_set",
+					"rulesets_refresh",
+					"settings_set",
+					"start",
+					"stop",
+					"subscription_delete",
+					"subscription_refresh",
+					"subscription_set",
+					"subscription_test",
+					"transparent_set",
+					"tun_set",
+					"validate"
+				]
+			},
+			"uci": [
+				"pikabox"
+			]
+		}
+	}
+}

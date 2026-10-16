@@ -1,5 +1,5 @@
 {
-  description = "Development shell for openwrt-singbox";
+  description = "Development shell for Pika-box";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
   inputs.systems.url = "github:nix-systems/default";

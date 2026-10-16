@@ -1,0 +1,109 @@
+config manager 'main'
+	option enabled '0'
+	option log_level 'info'
+	# route.final target: an outbound group, outbound, subscription, or direct.
+	option final ''
+	option dns_final 'cloudflare_doh'
+	option runtime_mode 'rule'
+	option sing_box_bin '/usr/bin/sing-box'
+	option socket_path '/var/run/pikabox/pikaboxd.sock'
+	option api_listen '127.0.0.1:9090'
+	option mixed_listen '0.0.0.0'
+	option mixed_port '2080'
+	option tproxy_port '7893'
+	option dns_port '1053'
+	option update_interval '24h'
+	option probe_interval '10m'
+	option test_url 'https://www.gstatic.com/generate_204'
+
+# Outbounds: one proxy each; source is a share URI or a sing-box outbound JSON.
+# config outbound 'nl_vp1'
+# 	option name 'NL vp1'
+# 	option source 'vless://uuid@host:443?security=reality&pbk=...&sid=...&sni=www.mozilla.org&fp=chrome&flow=xtls-rprx-vision#nl-vp1'
+
+# Subscriptions: filter is an expr expression over name/type/server/port and
+# the full outbound object; count = how many of the fastest alive to use.
+# config subscription 'provider'
+# 	option name 'Provider'
+# 	option url 'https://example.com/sub'
+# 	option filter 'type in ["vless", "trojan"] && name matches "(?i)nl|de"'
+# 	option count '3'
+
+# Outbound groups: ordered members (outbounds, subscriptions, other groups,
+# direct/block). mode urltest = fastest; fallback = first alive in order.
+# config outbound_group 'us_out'
+# 	option name 'us-out'
+# 	option mode 'fallback'
+# 	list member 'nl_vp1'
+# 	list member 'provider'
+
+config dns_server 'cloudflare_doh'
+	option enabled '1'
+	option name 'Cloudflare DoH'
+	option type 'doh'
+	option address 'https://1.1.1.1/dns-query'
+	option detour 'proxy'
+
+config dns_server 'cloudflare_doh_direct'
+	option enabled '1'
+	option name 'Cloudflare DoH (direct)'
+	option type 'doh'
+	option address 'https://1.1.1.1/dns-query'
+	option detour 'direct'
+
+config dns_server 'google_doh'
+	option enabled '0'
+	option name 'Google DoH'
+	option type 'doh'
+	option address 'https://dns.google/dns-query'
+	option detour 'proxy'
+
+config dns_server 'local_udp'
+	option enabled '1'
+	option name 'Local UDP'
+	option type 'udp'
+	option address '223.5.5.5'
+	option detour 'direct'
+
+# Rule groups: named sets of "<type>:<value>" rules, ORed. Types are sing-box
+# route rule fields (domain, domain_suffix, domain_keyword, domain_regex,
+# ip_cidr, source_ip_cidr, ip_is_private, port, port_range, network,
+# protocol, process_name, ...) or remote:<rule-set URL> (.srs = binary).
+config rule_group 'private'
+	option name 'Private networks'
+	list rule 'ip_is_private:true'
+
+# config rule_group 'telegram'
+# 	option name 'Telegram'
+# 	list rule 'domain_suffix:telegram.org'
+# 	list rule 'domain_suffix:t.me'
+# 	list rule 'remote:https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-telegram.srs'
+
+# Routes: ordered, first match wins; anything unmatched goes to main.final.
+config route 'route_1'
+	option enabled '1'
+	option rule_group 'private'
+	option outbound 'direct'
+
+config transparent 'transparent'
+	option default_mode 'off'
+	list lan_ifname 'br-lan'
+	option dns_hijack '0'
+	option kill_switch '0'
+
+# Per-device overrides (add one section per pinned client):
+# config proxy_device 'console'
+# 	option enabled '1'
+# 	option name 'Game console'
+# 	option mac 'aa:bb:cc:dd:ee:ff'
+# 	option mode 'tproxy'
+# 	# Send this device's UDP directly (TCP still proxied) — good for
+# 	# gaming consoles where proxied UDP breaks NAT type and adds latency.
+# 	option bypass_udp '1'
+
+config tun 'tun'
+	option enabled '0'
+	option auto_route '1'
+	option auto_redirect '1'
+	option inet4_address '172.19.0.1/30'
+	option inet6_address 'fdfe:dcba:9876::1/126'

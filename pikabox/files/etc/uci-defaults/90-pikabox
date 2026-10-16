@@ -1,0 +1,11 @@
+#!/bin/sh
+
+mkdir -p /etc/pikabox/generated
+mkdir -p /etc/pikabox/rulesets
+mkdir -p /etc/pikabox/state
+mkdir -p /var/run/pikabox
+mkdir -p /var/run/sing-box
+
+[ -x /etc/init.d/pikaboxd ] && /etc/init.d/pikaboxd enable
+
+exit 0

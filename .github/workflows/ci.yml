@@ -22,7 +22,7 @@ jobs:
 
       - name: gofmt
         run: |
-          unformatted="$(gofmt -l singbox-manager/src)"
+          unformatted="$(gofmt -l pikabox/src)"
           if [ -n "$unformatted" ]; then
             echo "These files are not gofmt-clean:"
             echo "$unformatted"
@@ -30,7 +30,7 @@ jobs:
           fi
 
       - name: go vet
-        run: go -C singbox-manager/src vet ./...
+        run: go -C pikabox/src vet ./...
 
       - name: go test
-        run: go -C singbox-manager/src test ./...
+        run: go -C pikabox/src test ./...

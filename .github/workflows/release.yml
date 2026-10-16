@@ -35,7 +35,7 @@ jobs:
       # refs; a manual dispatch on a branch falls back to the git-describe value.
       - name: Derive package version from tag
         if: github.ref_type == 'tag'
-        run: echo "SINGBOX_PKG_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+        run: echo "PIKABOX_PKG_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
 
       - name: Install OpenWrt SDK build prerequisites
         run: |
@@ -62,12 +62,12 @@ jobs:
           # No-op for opkg/.ipk releases (24.10); builds packages.adb for apk
           # releases (25.12+). The key file's basename is embedded as the signer
           # name, so it MUST match the public key clients trust
-          # (/etc/apk/keys/openwrt-singbox.pem). A fork without the secret gets an
+          # (/etc/apk/keys/pikabox.pem). A fork without the secret gets an
           # unsigned index instead of a failed build.
           key_arg=
           if [ -n "$APK_SIGN_KEY" ]; then
-            printf '%s\n' "$APK_SIGN_KEY" > "$RUNNER_TEMP/openwrt-singbox.pem"
-            key_arg="APK_SIGN_KEY=$RUNNER_TEMP/openwrt-singbox.pem"
+            printf '%s\n' "$APK_SIGN_KEY" > "$RUNNER_TEMP/pikabox.pem"
+            key_arg="APK_SIGN_KEY=$RUNNER_TEMP/pikabox.pem"
           else
             echo "::warning::APK_SIGN_KEY secret not set — apk feed index will be UNSIGNED"
           fi
@@ -109,15 +109,15 @@ jobs:
           for d in artifacts/packages-*; do
             [ -d "$d" ] || continue
             name="${d##*/packages-}"; series="${name%-*}"; arch="${name##*-}"
-            for f in "$d"/singbox-manager-*.apk "$d"/singbox-manager_*.ipk; do
+            for f in "$d"/pikabox-*.apk "$d"/pikabox_*.ipk; do
               [ -e "$f" ] || continue
-              cp -v "$f" "assets/singbox-manager_${series}_${arch}.${f##*.}"
+              cp -v "$f" "assets/pikabox_${series}_${arch}.${f##*.}"
             done
             # The luci-app is architecture-independent (PKGARCH:=all); ship one
             # copy per release series.
-            for f in "$d"/luci-app-singbox-manager-*.apk "$d"/luci-app-singbox-manager_*.ipk; do
+            for f in "$d"/luci-app-pikabox-*.apk "$d"/luci-app-pikabox_*.ipk; do
               [ -e "$f" ] || continue
-              cp -vn "$f" "assets/luci-app-singbox-manager_${series}.${f##*.}" || true
+              cp -vn "$f" "assets/luci-app-pikabox_${series}.${f##*.}" || true
             done
           done
           ls -l assets
@@ -143,7 +143,7 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      # Checked out for apk/openwrt-singbox.pem — the feed signing public key.
+      # Checked out for apk/pikabox.pem — the feed signing public key.
       - uses: actions/checkout@v4
 
       - uses: actions/download-artifact@v4
@@ -156,8 +156,8 @@ jobs:
           mkdir -p site
 
           # Publish the feed signing public key at the site root. Clients trust
-          # the feed by installing it as /etc/apk/keys/openwrt-singbox.pem.
-          cp -v apk/openwrt-singbox.pem site/openwrt-singbox.pem
+          # the feed by installing it as /etc/apk/keys/pikabox.pem.
+          cp -v apk/pikabox.pem site/pikabox.pem
 
           for d in artifacts/packages-*; do
             [ -d "$d" ] || continue
@@ -178,19 +178,19 @@ jobs:
               -exec cp -v {} "$arch_dir"/ \;
           done
 
-          base='https://aminmokhtari94.github.io/openwrt-singbox'
+          base='https://sannysoft.github.io/openwrt-singbox'
           {
             echo '<!doctype html>'
             echo '<meta charset="utf-8">'
-            echo '<title>openwrt-singbox package repository</title>'
-            echo '<h1>openwrt-singbox package repository</h1>'
+            echo '<title>Pika-box package repository</title>'
+            echo '<h1>Pika-box package repository</h1>'
             echo '<p>Signed <code>apk</code> feeds for OpenWrt 25.12+. Trust the key once, then'
             echo '   install with plain <code>apk</code> (no <code>--allow-untrusted</code>):</p>'
             echo '<pre>'
-            echo "wget -O /etc/apk/keys/openwrt-singbox.pem ${base}/openwrt-singbox.pem"
-            echo "echo \"${base}/packages/openwrt-25.12/\$(cat /etc/apk/arch)/packages.adb\" &gt; /etc/apk/repositories.d/openwrt-singbox.list"
+            echo "wget -O /etc/apk/keys/pikabox.pem ${base}/pikabox.pem"
+            echo "echo \"${base}/packages/openwrt-25.12/\$(cat /etc/apk/arch)/packages.adb\" &gt; /etc/apk/repositories.d/pikabox.list"
             echo "apk update"
-            echo "apk add singbox-manager luci-app-singbox-manager"
+            echo "apk add pikabox luci-app-pikabox"
             echo '</pre>'
             echo '<p>Available feeds (the path segment is your <code>cat /etc/apk/arch</code>):</p>'
             echo '<ul>'
