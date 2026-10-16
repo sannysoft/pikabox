@@ -494,7 +494,7 @@ func connectionsRPC(configPath string, _ json.RawMessage) map[string]any {
 			view.Chain = append(view.Chain, displayName(cfg, c.Chains[i]))
 			kind := cfg.Kind(c.Chains[i])
 			if kind == "" && strings.Contains(c.Chains[i], ".") {
-				kind = "subscription"
+				kind = "server" // a subscription's candidate
 			} else if kind == "builtin" {
 				kind = c.Chains[i]
 			}

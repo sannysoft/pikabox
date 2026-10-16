@@ -262,6 +262,8 @@ var CSS = [
 	'.sbm-pill small{font-size:10px;letter-spacing:.06em;text-transform:uppercase;opacity:.7}',
 	'.sbm-k-group{color:#5b4bd6;background:rgba(91,75,214,.10);border-color:rgba(91,75,214,.25)}',
 	'.sbm-k-subscription{color:#0d7f86;background:rgba(13,127,134,.10);border-color:rgba(13,127,134,.25)}',
+	'.sbm-k-server{color:#0d7f86;background:transparent;border-color:rgba(13,127,134,.35);border-style:dashed}',
+	'[data-darkmode="true"] .sbm-k-server{color:#5fd4db}',
 	'.sbm-k-outbound{color:#4a5568;background:rgba(74,85,104,.10);border-color:rgba(74,85,104,.22)}',
 	'.sbm-k-direct{color:#0f7a39;background:rgba(15,122,57,.10);border-color:rgba(15,122,57,.25)}',
 	'.sbm-k-block{color:#b42318;background:rgba(180,35,24,.08);border-color:rgba(180,35,24,.25)}',

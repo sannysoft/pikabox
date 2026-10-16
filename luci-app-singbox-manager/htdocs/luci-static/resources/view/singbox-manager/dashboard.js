@@ -349,7 +349,7 @@ function ago(iso) {
 }
 
 function hopKind(kind) {
-	return kind === 'server' ? 'subscription' : kind;
+	return kind;
 }
 
 // renderPath shows the live exit: default route → each group's current
@@ -447,7 +447,7 @@ function graphNode(node, live) {
 	if (node.unused)
 		foot = _('not used by any route');
 
-	var kind = node.kind === 'server' ? 'subscription' : node.kind;
+	var kind = node.kind;
 	var cls = 'sbm-node' + (down ? ' sbm-down' : '') + (live ? ' sbm-live' : '') + (node.unused ? ' sbm-unused' : '') + (node.kind === 'rule' ? ' sbm-rule' : '');
 	return E('div', { 'class': cls, 'data-node': node.id, 'title': node.error || '' }, [
 		E('div', { 'class': 'sbm-node-head' }, [ theme.pill(node.name || node.id, node.kind === 'builtin' ? 'builtin' : kind, node.name), ms ]),
