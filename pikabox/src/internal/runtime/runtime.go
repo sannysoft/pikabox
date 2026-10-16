@@ -295,6 +295,7 @@ func applyFirewall(cfg managerconfig.Config, paths Paths, result *Result) error 
 		if err := applyTProxyRoutes(); err != nil {
 			return err
 		}
+		disableBridgeNetfilter()
 		result.NftablesPath = paths.NftablesInclude
 		// `fw4 reload` clears chain rules but not named-set elements, so stale
 		// per-device elements must be flushed before the reload re-includes the
@@ -474,6 +475,34 @@ func ensureTProxyModule() error {
 	return nil
 }
 
+// bridgeNetfilterSysctls are set to 1 by Docker (via br_netfilter). With them
+// on, LAN traffic arriving on a bridge such as br-lan runs the prerouting hooks
+// at the bridge layer: tproxy assigns sing-box's socket there, ip_rcv then
+// drops that assignment ("Must drop socket now because of tproxy") and the
+// hooks do not run again, so every tproxied packet is lost. DNS still works
+// because its redirect rewrites the destination instead.
+var bridgeNetfilterSysctls = []string{
+	"/proc/sys/net/bridge/bridge-nf-call-iptables",
+	"/proc/sys/net/bridge/bridge-nf-call-ip6tables",
+}
+
+// disableBridgeNetfilter switches bridge netfilter off when it is on. It is not
+// restored on stop: only filtering between ports of one bridge (e.g. Docker's
+// inter-container rules) depends on it.
+func disableBridgeNetfilter() {
+	for _, path := range bridgeNetfilterSysctls {
+		data, err := os.ReadFile(path)
+		if err != nil || strings.TrimSpace(string(data)) != "1" {
+			continue // br_netfilter not loaded, or already off
+		}
+		if err := os.WriteFile(path, []byte("0\n"), 0644); err != nil {
+			log.Printf("transparent proxy: cannot turn off %s: %v", path, err)
+			continue
+		}
+		log.Printf("transparent proxy: turned off %s (set by Docker's br_netfilter; it breaks tproxy on bridged LANs)", path)
+	}
+}
+
 func applyTProxyRoutes() error {
 	commands := [][]string{
 		{"ip", "-4", "route", "add", "local", "0.0.0.0/0", "dev", "lo", "table", "100"},
@@ -612,6 +641,10 @@ func supervisorLoop() {
 			return
 		}
 		if RunningPID(paths) > 0 {
+			if cfg.Transparent.Active() {
+				// Docker turns bridge netfilter back on whenever it restarts.
+				disableBridgeNetfilter()
+			}
 			continue
 		}
 		log.Printf("sing-box runtime is not running; restarting")
