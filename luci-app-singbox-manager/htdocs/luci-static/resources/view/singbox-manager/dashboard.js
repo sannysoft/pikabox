@@ -247,10 +247,10 @@ function renderHero(view, data) {
 		E('div', { 'class': 'singbox-manager-hero-facts' }, [
 			E('div', {}, [ E('span', {}, _('Final')), E('strong', {}, theme.text(((data.hops || [])[0] || {}).name || data.final)) ]),
 			E('div', {}, [ E('span', {}, _('Mode')), modeSelect ]),
-			E('div', {}, [ E('span', {}, _('Exit')), E('strong', { 'title': (data.chain || []).concat([ data.selected_outbound || '' ]).join(' → ') }, theme.text(data.selected_name || data.selected_outbound)) ]),
+			E('div', {}, [ E('span', {}, _('Exit')), E('strong', { 'class': 'sbm-oneline', 'title': (data.chain_names || []).concat([ data.selected_name || data.selected_outbound || '' ]).join(' → ') }, theme.text(data.selected_name || data.selected_outbound)) ]),
 			E('div', {}, [ E('span', {}, _('Health')), E('strong', { 'class': healthClass(data.health) }, [ health ]) ])
 		]),
-		E('div', { 'class': 'singbox-manager-hero-action' }, primary)
+		renderActions(view, data, primary)
 	]);
 }
 
@@ -272,31 +272,44 @@ function renderThroughput(data, hist) {
 	]);
 }
 
-function renderToolbar(view, data) {
-	return E('div', { 'class': 'singbox-manager-toolbar' }, [
-		E('button', {
-			'class': 'btn cbi-button',
-			'disabled': data.running ? null : 'disabled',
-			'click': ui.createHandlerFn(view, function() {
+var ICONS = {
+	restart: '<path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/>',
+	reload: '<path d="M21 12a9 9 0 0 1-15.5 6.3"/><path d="M3 12a9 9 0 0 1 15.5-6.3"/><path d="M18 2v4h-4"/><path d="M6 22v-4h4"/>',
+	validate: '<path d="M12 3l8 3v6c0 4.5-3.4 8.2-8 9-4.6-.8-8-4.5-8-9V6z"/><path d="M8.5 12l2.5 2.5 4.5-5"/>'
+};
+
+function iconButton(view, icon, label, enabled, action) {
+	var btn = E('button', {
+		'type': 'button',
+		'class': 'btn cbi-button sbm-icon-btn',
+		'title': label,
+		'aria-label': label,
+		'disabled': enabled ? null : 'disabled',
+		'click': ui.createHandlerFn(view, action)
+	});
+	// Static markup only (no data), so innerHTML is safe here.
+	btn.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true">' + ICONS[icon] + '</svg>';
+	return btn;
+}
+
+// renderActions puts the secondary runtime actions next to Start/Stop as
+// icon buttons, so the hero holds every control for the proxy itself.
+function renderActions(view, data, primary) {
+	return E('div', { 'class': 'singbox-manager-hero-action sbm-actions' }, [
+		E('div', { 'class': 'sbm-icon-group', 'role': 'group', 'aria-label': _('Runtime actions') }, [
+			iconButton(view, 'restart', _('Restart sing-box'), data.running, function() {
 				return runAction(view, callRestart, _('sing-box restarted'), _('Restart failed'));
-			})
-		}, _('Restart')),
-		E('button', {
-			'class': 'btn cbi-button',
-			'disabled': data.running ? null : 'disabled',
-			'title': _('Re-render the config and hot-reload sing-box'),
-			'click': ui.createHandlerFn(view, function() {
+			}),
+			iconButton(view, 'reload', _('Reload config (re-render and hot-reload)'), data.running, function() {
 				return runAction(view, callReload, _('sing-box reloaded'), _('Reload failed'));
-			})
-		}, _('Reload')),
-		E('button', {
-			'class': 'btn cbi-button',
-			'click': ui.createHandlerFn(view, function() {
+			}),
+			iconButton(view, 'validate', _('Validate config'), true, function() {
 				return callValidate().then(function(result) {
 					reportResult(result, _('Configuration is valid'), _('Configuration has errors'));
 				});
 			})
-		}, _('Validate'))
+		]),
+		primary
 	]);
 }
 
@@ -590,8 +603,7 @@ function renderLive(view, data) {
 			metric(_('Connections'), String(data.connections || 0)),
 			metric(_('Memory'), formatBytes((data.memory_kb || 0) * 1024)),
 			metric(_('Final mode'), data.strategy === 'fallback' ? _('first alive') : (data.strategy === 'urltest' ? _('fastest') : '-'))
-		]),
-		renderToolbar(view, data)
+		])
 	]);
 }
 
