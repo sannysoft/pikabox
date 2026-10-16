@@ -1,7 +1,7 @@
 # Pika-box
 
-[![CI](https://github.com/sannysoft/openwrt-singbox/actions/workflows/ci.yml/badge.svg)](https://github.com/sannysoft/openwrt-singbox/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/sannysoft/openwrt-singbox?sort=semver)](https://github.com/sannysoft/openwrt-singbox/releases/latest)
+[![CI](https://github.com/sannysoft/pikabox/actions/workflows/ci.yml/badge.svg)](https://github.com/sannysoft/pikabox/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/sannysoft/pikabox?sort=semver)](https://github.com/sannysoft/pikabox/releases/latest)
 
 **Pika-box** is a router-side manager for [sing-box](https://sing-box.sagernet.org/) on
 OpenWrt: a small Go daemon (`pikaboxd`) plus a LuCI app. You describe *what* goes *where*
@@ -110,11 +110,11 @@ selects it automatically — just paste:
 ```sh
 # 1. Trust the feed signing key (one time)
 wget -O /etc/apk/keys/pikabox.pem \
-  https://sannysoft.github.io/openwrt-singbox/pikabox.pem
+  https://sannysoft.github.io/pikabox/pikabox.pem
 
 # 2. Add the feed. The line points at the packages.adb index file itself, and
 #    lives in repositories.d/ alongside OpenWrt's own distfeeds.list.
-echo "https://sannysoft.github.io/openwrt-singbox/packages/openwrt-25.12/$(cat /etc/apk/arch)/packages.adb" \
+echo "https://sannysoft.github.io/pikabox/packages/openwrt-25.12/$(cat /etc/apk/arch)/packages.adb" \
   > /etc/apk/repositories.d/pikabox.list
 
 # 3. Install
@@ -136,7 +136,7 @@ apk add pikabox luci-app-pikabox
 
 24.10 uses `opkg`, which the project does not publish a feed for. Download the
 matching `.ipk` files from the
-[Releases](https://github.com/sannysoft/openwrt-singbox/releases/latest) page and
+[Releases](https://github.com/sannysoft/pikabox/releases/latest) page and
 install them with `opkg`:
 
 ```sh
@@ -149,7 +149,7 @@ opkg install \
 ### Manual release installation (25.12)
 
 You can also download `.apk` files from the
-[Releases](https://github.com/sannysoft/openwrt-singbox/releases/latest) page
+[Releases](https://github.com/sannysoft/pikabox/releases/latest) page
 instead of using the feed. Each release ships, per series (`24.10`, `25.12`):
 
 - `pikabox_<series>_<arch>.{apk,ipk}` — the daemon, one per architecture

@@ -178,7 +178,7 @@ jobs:
               -exec cp -v {} "$arch_dir"/ \;
           done
 
-          base='https://sannysoft.github.io/openwrt-singbox'
+          base='https://sannysoft.github.io/pikabox'
           {
             echo '<!doctype html>'
             echo '<meta charset="utf-8">'
