@@ -61,26 +61,13 @@ config manager 'main'
 Subscription candidates and their top-N selection live in
 `/etc/pikabox/state/`; latency results in `/var/run/pikabox/probe.json`.
 
-## Screenshots
-
-| Dashboard | Nodes |
-| --- | --- |
-| [![Dashboard — service status, throughput, and logs](screenshots/dashboard.png)](screenshots/dashboard.png) | [![Nodes — subscriptions, node groups, and health/latency](screenshots/nodes.png)](screenshots/nodes.png) |
-
-| DNS | Routing |
-| --- | --- |
-| [![DNS — servers, detours, and DNS rules](screenshots/dns.png)](screenshots/dns.png) | [![Routing — route rules and remote rule-sets](screenshots/routing.png)](screenshots/routing.png) |
-
-| Network | |
-| --- | --- |
-| [![Network — transparent proxy, TUN, and per-device overrides](screenshots/network.png)](screenshots/network.png) | |
-
 ## Components
 
 | Path | What it is |
 | --- | --- |
 | `pikabox/` | The `pikaboxd` Go daemon + OpenWrt package (Makefile, UCI config, init script). |
-| `luci-app-pikabox/` | LuCI web app (Dashboard, Nodes, DNS, Routing, Network). |
+| `luci-app-pikabox/` | LuCI web app (Dashboard, Outbounds, Subscriptions, Outbound Groups, Rule Groups, Routing, DNS, Network, Settings). |
+| `install.sh` | One-line installer for OpenWrt 25.12+ (attached to every release). |
 | `Makefile` | Top-level dev/build orchestration: Go tests, SDK download, package builds, QEMU test lab. |
 | `flake.nix` | Nix dev shell with the full toolchain (Go, QEMU, OpenWrt SDK prerequisites). |
 
@@ -97,89 +84,44 @@ Subscription candidates and their top-N selection live in
 
 ## Install
 
-Release builds target **OpenWrt 25.12** (which uses the `apk` package manager) and
-**OpenWrt 24.10** (which uses `opkg`/`.ipk`). Pick the path that matches your release.
-
-### OpenWrt 25.12 — package feed (recommended)
-
-25.12 builds are published as a **signed** self-hosted `apk` feed. Trust the feed's
-signing key once, then install and upgrade with plain `apk` — no `--allow-untrusted`.
-The feed directory is named by your device's apk architecture, so `cat /etc/apk/arch`
-selects it automatically — just paste:
+Requires **OpenWrt 25.12+** (the `apk` package manager). On the router, as root:
 
 ```sh
-# 1. Trust the feed signing key (one time)
-wget -O /etc/apk/keys/pikabox.pem \
-  https://sannysoft.github.io/pikabox/pikabox.pem
-
-# 2. Add the feed. The line points at the packages.adb index file itself, and
-#    lives in repositories.d/ alongside OpenWrt's own distfeeds.list.
-echo "https://sannysoft.github.io/pikabox/packages/openwrt-25.12/$(cat /etc/apk/arch)/packages.adb" \
-  > /etc/apk/repositories.d/pikabox.list
-
-# 3. Install
-apk update
-apk add pikabox luci-app-pikabox
+wget -qO- https://github.com/sannysoft/pikabox/releases/latest/download/install.sh | sh
 ```
 
-> Prebuilt feeds currently cover x86/64 (`x86_64`), armsr/armv8 (`aarch64_generic`),
-> mediatek/filogic (`aarch64_cortex-a53`), armsr/armv7 (`arm_cortex-a15_neon-vfpv4`),
-> and ramips/mt7621 (`mipsel_24kc`). The feed path is your `cat /etc/apk/arch`. If
-> `apk update` 404s, your target isn't published yet — build it yourself with
-> `make ipk-<arch>` (see below).
+The script installs `sing-box` from the official OpenWrt feed and the Pika-box packages
+from the latest GitHub release, enables the service, and leaves the proxy off until you
+press **Start** in **LuCI → Services → Pika-box**. Re-run it to upgrade.
 
-> Prefer not to install the key? You can skip step 1 and run `apk --allow-untrusted
-> update` / `apk --allow-untrusted add …` instead — but trusting the key is
-> recommended so packages are integrity-verified.
+| Option | Effect |
+| --- | --- |
+| `PIKABOX_VERSION=v0.1.0` | install that release instead of the latest |
+| `PIKABOX_TPROXY=1` | also install `kmod-nft-tproxy` (needed for transparent proxy mode) |
 
-### OpenWrt 24.10 — `.ipk` from the release page
+e.g. `wget -qO- …/install.sh | PIKABOX_TPROXY=1 sh`.
 
-24.10 uses `opkg`, which the project does not publish a feed for. Download the
-matching `.ipk` files from the
-[Releases](https://github.com/sannysoft/pikabox/releases/latest) page and
-install them with `opkg`:
+Prebuilt architectures: `x86_64`, `aarch64_generic` (armsr/armv8), `aarch64_cortex-a53`
+(mediatek/filogic), `arm_cortex-a15_neon-vfpv4` (armsr/armv7), `mipsel_24kc`
+(ramips/mt7621) — check yours with `cat /etc/apk/arch`. Others: build from source below.
+
+### Manual install
+
+Download `pikabox_25.12_<arch>.apk` and `luci-app-pikabox_25.12.apk` from the
+[latest release](https://github.com/sannysoft/pikabox/releases/latest), then:
 
 ```sh
-# pick the daemon matching your device's architecture
-opkg install \
-  ./pikabox_24.10_x86_64.ipk \
-  ./luci-app-pikabox_24.10.ipk
+apk update && apk add sing-box
+apk add --allow-untrusted ./pikabox_25.12_<arch>.apk ./luci-app-pikabox_25.12.apk
+/etc/init.d/pikaboxd enable && /etc/init.d/pikaboxd start
 ```
 
-### Manual release installation (25.12)
+`--allow-untrusted` applies only to those two local files; sing-box and all dependencies
+come from the signed OpenWrt feeds. Configuration lives in `/etc/config/pikabox`.
 
-You can also download `.apk` files from the
-[Releases](https://github.com/sannysoft/pikabox/releases/latest) page
-instead of using the feed. Each release ships, per series (`24.10`, `25.12`):
-
-- `pikabox_<series>_<arch>.{apk,ipk}` — the daemon, one per architecture
-  (`x86_64`, `aarch64`, `armv7`, `mipsel`)
-- `luci-app-pikabox_<series>.{apk,ipk}` — the web UI (architecture-independent)
-
-```sh
-# pick the daemon matching your device's architecture
-apk add --allow-untrusted \
-  ./pikabox_25.12_x86_64.apk \
-  ./luci-app-pikabox_25.12.apk
-```
-
-After installing, open **LuCI → Services → Pika-box**. Configuration lives in
-`/etc/config/pikabox`.
-
-> On OpenWrt releases older than 24.10 there are no prebuilt packages; build for your
-> target with `make ipk-<arch> OPENWRT_VERSION=<release>` and install the resulting
-> `.ipk` with `opkg`.
-
-> `sing-box` is a declared dependency and is pulled automatically. **Transparent /
-> TProxy mode** additionally needs the `kmod-nft-tproxy` kernel module, which is
-> *not* a package dependency: it pulls sibling netfilter modules the OpenWrt SDK
-> cannot build, so depending on it would break every prebuilt package. Install it
-> by hand before enabling transparent proxying (the daemon reports a clear error
-> if it is missing):
->
-> ```sh
-> apk add kmod-nft-tproxy        # or: opkg install kmod-nft-tproxy
-> ```
+> **Transparent / TProxy mode** needs `kmod-nft-tproxy`, which is not a package
+> dependency (it pulls netfilter modules the SDK cannot build). `PIKABOX_TPROXY=1`
+> installs it, or run `apk add kmod-nft-tproxy`.
 
 ## Build from source
 
@@ -235,13 +177,15 @@ make undeploy          # remove packages and wipe leftover state
 
 ## CI / Releases
 
-- **CI** (`.github/workflows/ci.yml`) — runs `gofmt`, `go vet`, and the Go test suite on
-  every push and pull request.
-- **Release** (`.github/workflows/release.yml`) — on a `v*` tag, builds the OpenWrt
-  packages for OpenWrt 24.10 and 25.12 across all architectures via the SDK, publishes
-  them as a GitHub Release, and publishes the signed self-hosted `apk` feed (25.12) to
-  GitHub Pages. The feed index (`packages.adb`) is signed with the EC key stored in the
-  `APK_SIGN_KEY` repository secret; its public half is `apk/pikabox.pem`.
+- **CI** (`.github/workflows/ci.yml`) — `gofmt`, `go vet` and the Go tests on every push to
+  `main` and every pull request.
+- **Release** (`.github/workflows/release.yml`) — on a `v*` tag, builds the packages with
+  the OpenWrt 25.12 SDK for every architecture above and publishes a GitHub Release with
+  the `.apk` files, `install.sh`, and install instructions in the notes.
+- **Optional signed apk feed** — set the repo variable `PUBLISH_FEED=true`, add an EC
+  private key (PEM) as the `APK_SIGN_KEY` secret, and enable GitHub Pages with "GitHub
+  Actions" as the source; tagged releases then also publish a signed feed whose public
+  key is derived from that secret. Not needed for `install.sh`.
 
 Cut a release:
 

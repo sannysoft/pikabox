@@ -34,7 +34,7 @@ function showModal(view, row) {
 		E('label', {}, [ _('Name'), E('input', { 'class': 'cbi-input-text', 'name': 'name', 'value': row.name || '', 'placeholder': 'provider-1' }) ]),
 		E('label', {}, [ _('URL'), E('input', { 'class': 'cbi-input-text', 'name': 'url', 'value': row.url || '', 'placeholder': 'https://provider.example/sub/…' }) ]),
 		E('label', {}, [ _('Format'), theme.select('format', [ 'auto', 'base64', 'plain' ], row.format || 'auto') ]),
-		E('label', {}, [ _('User-Agent (optional)'), E('input', { 'class': 'cbi-input-text', 'name': 'user_agent', 'value': row.user_agent || '', 'placeholder': 'pikabox/1.0 — e.g. sing-box/1.13, Incy/1.0' }) ]),
+		E('label', {}, [ _('User-Agent (optional)'), E('input', { 'class': 'cbi-input-text', 'name': 'user_agent', 'value': row.user_agent || '', 'placeholder': 'INCY/2.0.0/Android (default)' }) ]),
 		theme.checkbox('hwid', !!row.hwid, _('Send HWID (device headers) — for panels with a device limit; registers this router as one device')),
 		E('label', {}, [ _('Filter'), E('textarea', { 'class': 'cbi-input-textarea pikabox-mono', 'name': 'filter', 'style': 'min-height:64px' }, [ row.filter || '' ]) ]),
 		E('p', { 'class': 'pikabox-inline-help' }, [ FILTER_HELP ]),

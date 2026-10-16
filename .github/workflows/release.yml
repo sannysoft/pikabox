@@ -19,11 +19,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # OpenWrt 25.12 ships apk/.apk; 24.10 ships opkg/.ipk. The SDK for each
-        # release emits whichever format that release uses — the same package
-        # sources build cleanly against both.
+        # Pika-box targets OpenWrt 25.12+ (apk). Packages built with the 25.12
+        # SDK install on any 25.12.x.
         release:
-          - { version: "24.10.7", series: "24.10" }
           - { version: "25.12.4", series: "25.12" }
         arch: [x86_64, aarch64, aarch64_cortexa53, armv7, mipsel]
     steps:
@@ -56,6 +54,8 @@ jobs:
         run: make ipk-${{ matrix.arch }} OPENWRT_VERSION=${{ matrix.release.version }}
 
       - name: Build signed apk feed index (packages.adb)
+        # Only needed for the optional self-hosted feed (see package-repository).
+        if: vars.PUBLISH_FEED == 'true'
         env:
           APK_SIGN_KEY: ${{ secrets.APK_SIGN_KEY }}
         run: |
@@ -120,6 +120,7 @@ jobs:
               cp -vn "$f" "assets/luci-app-pikabox_${series}.${f##*.}" || true
             done
           done
+          cp -v install.sh assets/install.sh
           ls -l assets
           test -n "$(ls -A assets)" || { echo 'No release assets staged'; exit 1; }
 
@@ -127,8 +128,24 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          cat > notes.md <<EOF
+          ## Install / upgrade (OpenWrt 25.12+)
+
+          On the router, as root:
+
+          \`\`\`sh
+          wget -qO- https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/install.sh | PIKABOX_VERSION=${GITHUB_REF_NAME} sh
+          \`\`\`
+
+          Add \`PIKABOX_TPROXY=1\` before \`sh\` to also install \`kmod-nft-tproxy\` for transparent proxying.
+          Then open **LuCI → Services → Pika-box**.
+
+          Prebuilt for: x86_64, aarch64_generic (armsr/armv8), aarch64_cortex-a53 (mediatek/filogic),
+          arm_cortex-a15_neon-vfpv4 (armsr/armv7), mipsel_24kc (ramips/mt7621).
+          EOF
           gh release create "${GITHUB_REF_NAME}" \
-            --title "${GITHUB_REF_NAME}" \
+            --title "Pika-box ${GITHUB_REF_NAME}" \
+            --notes-file notes.md \
             --generate-notes \
             --verify-tag \
             assets/*
@@ -137,13 +154,15 @@ jobs:
     name: Publish package repository
     needs: build
     runs-on: ubuntu-latest
-    # Only publish the self-hosted package feed from tagged releases.
-    if: startsWith(github.ref, 'refs/tags/v')
+    # Optional signed apk feed on GitHub Pages. Off unless the repo variable
+    # PUBLISH_FEED is "true", the APK_SIGN_KEY secret (EC private key, PEM) is
+    # set, and Pages is enabled with "GitHub Actions" as the source. The
+    # install.sh path needs none of this.
+    if: startsWith(github.ref, 'refs/tags/v') && vars.PUBLISH_FEED == 'true'
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      # Checked out for apk/pikabox.pem — the feed signing public key.
       - uses: actions/checkout@v4
 
       - uses: actions/download-artifact@v4
@@ -151,13 +170,17 @@ jobs:
           path: artifacts
 
       - name: Assemble signed apk feed
+        env:
+          APK_SIGN_KEY: ${{ secrets.APK_SIGN_KEY }}
         run: |
           set -euo pipefail
           mkdir -p site
 
-          # Publish the feed signing public key at the site root. Clients trust
-          # the feed by installing it as /etc/apk/keys/pikabox.pem.
-          cp -v apk/pikabox.pem site/pikabox.pem
+          # Publish the feed signing public key at the site root, derived from
+          # the signing secret so the two can never disagree. Clients trust the
+          # feed by installing it as /etc/apk/keys/pikabox.pem.
+          test -n "$APK_SIGN_KEY" || { echo "::error::PUBLISH_FEED is on but APK_SIGN_KEY is not set"; exit 1; }
+          printf '%s\n' "$APK_SIGN_KEY" | openssl ec -pubout -out site/pikabox.pem
 
           for d in artifacts/packages-*; do
             [ -d "$d" ] || continue

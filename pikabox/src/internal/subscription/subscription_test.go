@@ -1,7 +1,10 @@
 package subscription
 
 import (
+	"context"
 	"encoding/base64"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"strings"
 	"testing"
@@ -359,5 +362,23 @@ func TestParseOutboundsXrayJSONConfigs(t *testing.T) {
 	reality, _ := vtls["reality"].(map[string]any)
 	if vl["type"] != "vless" || vl["flow"] != "xtls-rprx-vision" || reality["public_key"] != "pk2" || reality["short_id"] != "cd" {
 		t.Fatalf("vless reality = %#v", vl)
+	}
+}
+
+func TestFetchSendsDefaultUserAgentUnlessOverridden(t *testing.T) {
+	var got []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = append(got, r.Header.Get("User-Agent"))
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer srv.Close()
+	if _, err := Fetch(context.Background(), srv.URL, "", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Fetch(context.Background(), srv.URL, "", map[string]string{"User-Agent": "sing-box/1.13"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0] != DefaultUserAgent || got[1] != "sing-box/1.13" {
+		t.Fatalf("user agents = %v", got)
 	}
 }

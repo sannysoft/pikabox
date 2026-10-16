@@ -243,6 +243,9 @@ func Due(source managerconfig.Subscription, now time.Time) bool {
 	return !updated.Add(interval).After(now)
 }
 
+// DefaultUserAgent is sent when a subscription sets no user_agent.
+const DefaultUserAgent = "INCY/2.0.0/Android"
+
 // Fetch downloads a subscription, through proxyAddr (an HTTP proxy such as the
 // local mixed inbound) when it is set.
 func Fetch(ctx context.Context, rawURL string, proxyAddr string, headers map[string]string) ([]byte, error) {
@@ -262,7 +265,11 @@ func Fetch(ctx context.Context, rawURL string, proxyAddr string, headers map[str
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", "pikabox/1.0")
+	// Default to a client name that subscription panels (Remnawave and
+	// similar) serve real server lists to — including the Xray JSON format,
+	// which lists protocols a share-URI list may omit. Per-subscription
+	// user_agent overrides it.
+	req.Header.Set("User-Agent", DefaultUserAgent)
 	for key, value := range headers {
 		req.Header.Set(key, value)
 	}
