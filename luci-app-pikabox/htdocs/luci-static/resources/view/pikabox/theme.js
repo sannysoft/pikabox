@@ -101,6 +101,8 @@ var CSS = [
 	'.pikabox-devicepicker-label{font-size:11px;color:var(--text-color-medium)}',
 	'.pikabox-chips{display:flex;gap:6px;flex-wrap:wrap}',
 	'.pikabox-chip{font-size:11px;padding:2px 8px!important;border-radius:12px}',
+	'.pikabox-tags{display:flex;gap:4px;flex-wrap:wrap}',
+	'.pikabox-tag{font-size:11px;padding:1px 8px;border-radius:10px;border:1px solid var(--border-color-medium);white-space:nowrap}',
 
 	/* ---- alerts + preformatted blocks ---- */
 	'.pikabox-alert{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;margin-bottom:12px;padding:12px 14px;border-radius:8px;border-left:4px solid #b91c1c;background:rgba(185,28,28,.10);font-size:13px}',

@@ -29,6 +29,23 @@ function showModal(view, row) {
 	}, _('Outbound saved'));
 }
 
+function usedBy(usages) {
+	if (!usages || !usages.length)
+		return E('span', { 'class': 'pikabox-hint' }, _('Not used'));
+	return E('div', { 'class': 'pikabox-tags' }, usages.map(function(u) {
+		var label;
+		switch (u.kind) {
+		case 'default': label = _('Default route'); break;
+		case 'group':   label = _('Group: %s').format(u.name || u.id); break;
+		case 'route':   label = _('Route %d: %s').format(u.position, u.name || u.id); break;
+		case 'dns':     label = _('DNS: %s').format(u.name || u.id); break;
+		case 'device':  label = _('Device: %s').format(u.name || u.id); break;
+		default:        label = u.id;
+		}
+		return E('span', { 'class': 'pikabox-tag' }, [ label ]);
+	}));
+}
+
 function renderTable(view, outbounds) {
 	return E('table', { 'class': 'pikabox-table' }, [
 		E('thead', {}, E('tr', {}, [
@@ -36,6 +53,7 @@ function renderTable(view, outbounds) {
 			E('th', {}, _('ID / tag')),
 			E('th', {}, _('Type')),
 			E('th', {}, _('Server')),
+			E('th', {}, _('Used by')),
 			E('th', {}, _('Latency')),
 			E('th', { 'title': _('256 KB download through the outbound, re-checked hourly') }, _('Bulk')),
 			E('th', {}, _('Checked')),
@@ -49,6 +67,7 @@ function renderTable(view, outbounds) {
 				E('td', { 'class': 'pikabox-mono' }, theme.text(ob.id)),
 				E('td', {}, ob.error ? E('span', { 'class': 'pikabox-status-error', 'title': ob.error }, [ _('invalid') ]) : theme.text(ob.type)),
 				E('td', { 'class': 'pikabox-wrap' }, theme.text(ob.server ? ob.server + ':' + ob.port : '')),
+				E('td', {}, usedBy(ob.used_by)),
 				E('td', {}, theme.latency(probe.latency_ms, probe.health, probe.error)),
 				E('td', {}, theme.bulk(probe.bulk, probe.bulk_kbps, probe.bulk_error)),
 				E('td', {}, theme.timeAgo(probe.checked_at, _('never'))),
@@ -68,7 +87,7 @@ function renderTable(view, outbounds) {
 					}) }, _('Delete'))
 				]))
 			]);
-		}) : E('tr', {}, E('td', { 'colspan': 9 }, _('No outbounds yet'))))
+		}) : E('tr', {}, E('td', { 'colspan': 10 }, _('No outbounds yet'))))
 	]);
 }
 

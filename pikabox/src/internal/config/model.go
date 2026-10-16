@@ -337,6 +337,62 @@ func (cfg Config) Kind(id string) string {
 	return ""
 }
 
+// Usage is one place that refers to an outbound target.
+type Usage struct {
+	Kind     string `json:"kind"` // default | group | route | dns | device
+	ID       string `json:"id,omitempty"`
+	Name     string `json:"name,omitempty"`
+	Position int    `json:"position,omitempty"` // route: 1-based, as on the Routing page
+}
+
+// UsedBy lists the direct references to target id: the default route, the
+// groups that list it, routes that send to it, DNS detours and device pins
+// (the same references DeleteTarget removes).
+func (cfg Config) UsedBy(id string) []Usage {
+	usages := []Usage{}
+	if cfg.Manager.Final == id {
+		usages = append(usages, Usage{Kind: "default"})
+	}
+	groups := make([]OutboundGroup, 0, len(cfg.OutboundGroups))
+	for _, group := range cfg.OutboundGroups {
+		groups = append(groups, group)
+	}
+	sortByID(groups, func(g OutboundGroup) string { return g.ID })
+	for _, group := range groups {
+		for _, member := range group.Members {
+			if member == id {
+				usages = append(usages, Usage{Kind: "group", ID: group.ID, Name: group.Name})
+				break
+			}
+		}
+	}
+	for i, route := range cfg.Routes {
+		if route.Outbound == id {
+			name := route.RuleGroup
+			if group, ok := cfg.RuleGroups[route.RuleGroup]; ok && group.Name != "" {
+				name = group.Name
+			}
+			usages = append(usages, Usage{Kind: "route", ID: route.ID, Name: name, Position: i + 1})
+		}
+	}
+	servers := make([]DNSServer, 0, len(cfg.DNSServers))
+	for _, server := range cfg.DNSServers {
+		servers = append(servers, server)
+	}
+	sortByID(servers, func(s DNSServer) string { return s.ID })
+	for _, server := range servers {
+		if server.Detour == id {
+			usages = append(usages, Usage{Kind: "dns", ID: server.ID, Name: server.Name})
+		}
+	}
+	for _, device := range cfg.Transparent.Devices {
+		if device.Group == id {
+			usages = append(usages, Usage{Kind: "device", ID: device.ID, Name: device.Name})
+		}
+	}
+	return usages
+}
+
 func hasKey[T any](m map[string]T, key string) bool {
 	_, ok := m[key]
 	return ok
