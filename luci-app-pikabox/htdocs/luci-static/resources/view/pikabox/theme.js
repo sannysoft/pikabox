@@ -445,6 +445,17 @@ return baseclass.extend({
 		return E('span', { 'class': 'pikabox-ms ' + cls }, [ ms + ' ms' ]);
 	},
 
+	// bulk renders a bulk-download verdict: throughput when the tunnel
+	// carried volume, the stall point when it froze, a dash when unchecked.
+	bulk: function(state, kbps, error) {
+		if (state === 'ok')
+			return E('span', { 'class': 'pikabox-ms fast', 'title': _('A 256 KB download completed through this outbound') }, [
+				kbps >= 1024 ? (kbps / 1024).toFixed(1) + ' MB/s' : kbps + ' KB/s' ]);
+		if (state === 'stalled')
+			return E('span', { 'class': 'pikabox-ms down', 'title': _('Answers latency tests but freezes on real traffic — typical DPI throttling. Not used for selection or fallback.') }, [ error || _('stalls') ]);
+		return E('span', { 'class': 'pikabox-ms none', 'title': _('Not bulk-checked yet') }, [ '—' ]);
+	},
+
 	// ago formats an ISO time as "12s ago" / "5m ago" / "3h ago" / "2d ago".
 	ago: function(iso) {
 		if (!iso)

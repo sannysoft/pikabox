@@ -34,6 +34,7 @@ func settingsRPC(configPath string, _ json.RawMessage) map[string]any {
 			"log_level":      m.LogLevel,
 			"probe_interval": m.ProbeInterval,
 			"test_url":       m.TestURL,
+			"bulk_test_url":  m.BulkTestURL,
 			"mixed_listen":   m.MixedListen,
 			"mixed_port":     m.MixedPort,
 			"tproxy_port":    m.TProxyPort,
@@ -79,6 +80,7 @@ type settingsPayload struct {
 	LogLevel      *string `json:"log_level"`
 	ProbeInterval *string `json:"probe_interval"`
 	TestURL       *string `json:"test_url"`
+	BulkTestURL   *string `json:"bulk_test_url"`
 	DNSFinal      *string `json:"dns_final"`
 	MixedListen   *string `json:"mixed_listen"`
 	MixedPort     *string `json:"mixed_port"`
@@ -110,7 +112,7 @@ func (p *settingsPayload) UnmarshalJSON(data []byte) error {
 		return &s
 	}
 	*p = settingsPayload{
-		LogLevel: str("log_level"), ProbeInterval: str("probe_interval"), TestURL: str("test_url"),
+		LogLevel: str("log_level"), ProbeInterval: str("probe_interval"), TestURL: str("test_url"), BulkTestURL: str("bulk_test_url"),
 		DNSFinal: str("dns_final"), MixedListen: str("mixed_listen"), MixedPort: str("mixed_port"),
 		TProxyPort: str("tproxy_port"), DNSPort: str("dns_port"), APIListen: str("api_listen"),
 		SingBoxBinary: str("sing_box_bin"),
@@ -131,8 +133,11 @@ func setSettings(configPath string, raw json.RawMessage) map[string]any {
 	if v := settings.TestURL; v != nil && *v != "" && !strings.HasPrefix(*v, "http://") && !strings.HasPrefix(*v, "https://") {
 		return fail(fmt.Errorf("test URL must start with http:// or https://"))
 	}
+	if v := settings.BulkTestURL; v != nil && *v != "" && *v != "off" && !strings.HasPrefix(*v, "http://") && !strings.HasPrefix(*v, "https://") {
+		return fail(fmt.Errorf("bulk test URL must start with http:// or https:// (or be off)"))
+	}
 	for key, value := range map[string]*string{
-		"log_level": settings.LogLevel, "probe_interval": settings.ProbeInterval, "test_url": settings.TestURL,
+		"log_level": settings.LogLevel, "probe_interval": settings.ProbeInterval, "test_url": settings.TestURL, "bulk_test_url": settings.BulkTestURL,
 		"dns_final": settings.DNSFinal, "mixed_listen": settings.MixedListen, "mixed_port": settings.MixedPort,
 		"tproxy_port": settings.TProxyPort, "dns_port": settings.DNSPort, "api_listen": settings.APIListen,
 		"sing_box_bin": settings.SingBoxBinary,

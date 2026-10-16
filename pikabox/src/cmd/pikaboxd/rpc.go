@@ -309,14 +309,19 @@ func testOutbounds(configPath string, raw json.RawMessage) map[string]any {
 	if err != nil {
 		return fail(err)
 	}
+	// A manual test always includes the bulk check (when enabled).
+	opts := health.ProbeOptions{Binary: cfg.Manager.SingBoxBinary, TestURL: cfg.Manager.TestURL, BulkURL: bulkURL(cfg)}
+	opts.BulkSelect = func(delay map[string]health.EndpointResult) []string {
+		if delay[params.ID].Health == "ok" {
+			return []string{params.ID}
+		}
+		return nil
+	}
 	probeMu.Lock()
-	results := health.ProbeOutbounds(context.Background(),
-		health.ProbeOptions{Binary: cfg.Manager.SingBoxBinary, TestURL: cfg.Manager.TestURL},
-		map[string]map[string]any{params.ID: item.Outbound})
+	results := health.ProbeOutbounds(context.Background(), opts, map[string]map[string]any{params.ID: item.Outbound})
 	probeMu.Unlock()
-	result := results[params.ID]
 	stored := managerconfig.LoadProbeResults()
-	stored[params.ID] = managerconfig.ProbeResult{Health: result.Health, LatencyMS: result.LatencyMS, Error: result.Error, CheckedAt: time.Now().UTC().Format(time.RFC3339)}
+	stored[params.ID] = mergeProbe(stored[params.ID], results[params.ID], time.Now().UTC().Format(time.RFC3339))
 	_ = managerconfig.SaveProbeResults(stored)
 	recordProbe(params.ID, stored[params.ID])
 	return ok("result", stored[params.ID])
@@ -346,6 +351,9 @@ type candidateView struct {
 	Health    string `json:"health,omitempty"`
 	LatencyMS int    `json:"latency_ms,omitempty"`
 	Error     string `json:"error,omitempty"`
+	Bulk      string `json:"bulk,omitempty"`
+	BulkKBps  int    `json:"bulk_kbps,omitempty"`
+	BulkError string `json:"bulk_error,omitempty"`
 }
 
 func candidateViews(state managerconfig.SubscriptionState, results map[string]managerconfig.ProbeResult) []candidateView {
@@ -364,6 +372,9 @@ func candidateViews(state managerconfig.SubscriptionState, results map[string]ma
 		view.Server, _ = c.Outbound["server"].(string)
 		if result, found := results[c.ID]; found && view.Matched {
 			view.Health, view.LatencyMS, view.Error = result.Health, result.LatencyMS, result.Error
+			if result.BulkFresh() {
+				view.Bulk, view.BulkKBps, view.BulkError = result.Bulk, result.BulkKBps, result.BulkError
+			}
 		}
 		views = append(views, view)
 	}

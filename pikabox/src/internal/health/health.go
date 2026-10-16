@@ -23,6 +23,8 @@ type EndpointResult struct {
 	LatencyMS int    `json:"latency_ms"`
 	Method    string `json:"method,omitempty"`
 	Error     string `json:"error,omitempty"`
+	// Bulk is set when a bulk download check ran for this outbound.
+	Bulk *BulkResult `json:"bulk,omitempty"`
 }
 
 func TestURL(ctx context.Context, url string) (EndpointResult, error) {

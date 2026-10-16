@@ -266,7 +266,7 @@ func applyManager(cfg *Config, sec section) error {
 		"enabled": true, "paused": true, "log_level": true, "runtime_mode": true,
 		"sing_box_bin": true, "socket_path": true, "api_listen": true,
 		"mixed_listen": true, "mixed_port": true, "tproxy_port": true, "dns_port": true,
-		"update_interval": true, "final": true, "dns_final": true, "probe_interval": true, "test_url": true,
+		"update_interval": true, "final": true, "dns_final": true, "probe_interval": true, "test_url": true, "bulk_test_url": true,
 	}
 	if err := rejectUnknownOptions(sec, allowed); err != nil {
 		return err
@@ -310,6 +310,8 @@ func applyManager(cfg *Config, sec section) error {
 			cfg.Manager.ProbeInterval = value
 		case "test_url":
 			cfg.Manager.TestURL = value
+		case "bulk_test_url":
+			cfg.Manager.BulkTestURL = value
 		}
 		if err != nil {
 			return err

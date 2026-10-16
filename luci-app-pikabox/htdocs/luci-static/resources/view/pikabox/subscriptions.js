@@ -72,7 +72,7 @@ function showOutbounds(view, sub) {
 			E('div', { 'style': 'max-height:65vh;overflow:auto' }, E('table', { 'class': 'pikabox-table' }, [
 				E('thead', {}, E('tr', {}, [
 					E('th', {}, _('Name')), E('th', {}, _('Type')), E('th', {}, _('Server')),
-					E('th', {}, _('Filter')), E('th', {}, _('Latency')), E('th', {}, _('In use'))
+					E('th', {}, _('Filter')), E('th', {}, _('Latency')), E('th', {}, _('Bulk')), E('th', {}, _('In use'))
 				])),
 				E('tbody', {}, rows.length ? rows.map(function(c) {
 					return E('tr', { 'class': c.selected ? 'pikabox-current' : '' }, [
@@ -81,9 +81,10 @@ function showOutbounds(view, sub) {
 						E('td', { 'class': 'pikabox-wrap' }, theme.text(c.server + ':' + c.port)),
 						E('td', {}, c.matched ? _('pass') : _('filtered out')),
 						E('td', {}, c.matched ? theme.latency(c.latency_ms, c.health, c.error) : '-'),
+						E('td', {}, c.matched ? theme.bulk(c.bulk, c.bulk_kbps, c.bulk_error) : '-'),
 						E('td', {}, c.selected ? _('Yes') : '')
 					]);
-				}) : E('tr', {}, E('td', { 'colspan': 6 }, _('Nothing fetched yet'))))
+				}) : E('tr', {}, E('td', { 'colspan': 7 }, _('Nothing fetched yet'))))
 			])),
 			E('div', { 'class': 'right' }, E('button', { 'class': 'btn cbi-button', 'click': ui.hideModal }, _('Close')))
 		]);

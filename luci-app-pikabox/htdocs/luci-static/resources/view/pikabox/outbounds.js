@@ -37,6 +37,7 @@ function renderTable(view, outbounds) {
 			E('th', {}, _('Type')),
 			E('th', {}, _('Server')),
 			E('th', {}, _('Latency')),
+			E('th', { 'title': _('256 KB download through the outbound, re-checked hourly') }, _('Bulk')),
 			E('th', {}, _('Checked')),
 			E('th', {}, _('Enabled')),
 			E('th', {}, '')
@@ -49,6 +50,7 @@ function renderTable(view, outbounds) {
 				E('td', {}, ob.error ? E('span', { 'class': 'pikabox-status-error', 'title': ob.error }, [ _('invalid') ]) : theme.text(ob.type)),
 				E('td', { 'class': 'pikabox-wrap' }, theme.text(ob.server ? ob.server + ':' + ob.port : '')),
 				E('td', {}, theme.latency(probe.latency_ms, probe.health, probe.error)),
+				E('td', {}, theme.bulk(probe.bulk, probe.bulk_kbps, probe.bulk_error)),
 				E('td', {}, theme.timeAgo(probe.checked_at, _('never'))),
 				E('td', {}, ob.enabled ? _('Yes') : _('No')),
 				E('td', {}, E('div', { 'class': 'pikabox-actions' }, [
@@ -66,7 +68,7 @@ function renderTable(view, outbounds) {
 					}) }, _('Delete'))
 				]))
 			]);
-		}) : E('tr', {}, E('td', { 'colspan': 8 }, _('No outbounds yet'))))
+		}) : E('tr', {}, E('td', { 'colspan': 9 }, _('No outbounds yet'))))
 	]);
 }
 
@@ -96,7 +98,7 @@ return view.extend({
 						E('button', { 'class': 'btn cbi-button cbi-button-add', 'click': ui.createHandlerFn(view, function() { showModal(view); }) }, _('Add'))
 					])
 				]),
-				E('p', { 'class': 'pikabox-hint' }, _('Latency is a real request through each outbound (handshake + transport + HTTP GET of the test URL), re-measured every probe interval.')),
+				E('p', { 'class': 'pikabox-hint' }, _('Latency is a real request through each outbound, re-measured every probe interval. Bulk downloads 256 KB through it (hourly) to catch tunnels that answer quickly but freeze on real traffic; those are skipped by fastest and fallback picks.')),
 				(data && data.ok === false) ? E('div', { 'class': 'pikabox-warning' }, theme.text((data.errors || []).join('; '))) : '',
 				renderTable(view, (data && data.outbounds) || [])
 			])

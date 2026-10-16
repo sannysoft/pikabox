@@ -7,8 +7,10 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 
 	managerconfig "github.com/sannysoft/pikabox/internal/config"
+	"github.com/sannysoft/pikabox/internal/health"
 	"github.com/sannysoft/pikabox/internal/render"
 )
 
@@ -229,5 +231,35 @@ func TestSettingsPayloadAcceptsNumbers(t *testing.T) {
 	p, err := decode[settingsPayload](json.RawMessage(`{"settings":{"mixed_port":2081,"log_level":"warn"}}`), "settings")
 	if err != nil || p.MixedPort == nil || *p.MixedPort != "2081" || *p.LogLevel != "warn" || p.TestURL != nil {
 		t.Fatalf("payload = %#v, %v", p, err)
+	}
+}
+
+func TestStalledCandidatesAreNotSelected(t *testing.T) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	cands := []managerconfig.Candidate{{ID: "s.fast"}, {ID: "s.mid"}, {ID: "s.slow"}}
+	results := map[string]managerconfig.ProbeResult{
+		"s.fast": {Health: "ok", LatencyMS: 50, Bulk: "stalled", BulkCheckedAt: now},
+		"s.mid":  {Health: "ok", LatencyMS: 90, Bulk: "ok", BulkCheckedAt: now},
+		"s.slow": {Health: "ok", LatencyMS: 300},
+	}
+	if got := selectFastest(cands, results, 2); !reflect.DeepEqual(got, []string{"s.mid", "s.slow"}) {
+		t.Fatalf("selected = %v: a stalled server must be skipped despite lowest latency", got)
+	}
+	old := time.Now().Add(-2 * time.Hour).UTC().Format(time.RFC3339)
+	results["s.fast"] = managerconfig.ProbeResult{Health: "ok", LatencyMS: 50, Bulk: "stalled", BulkCheckedAt: old}
+	if got := selectFastest(cands, results, 1); !reflect.DeepEqual(got, []string{"s.fast"}) {
+		t.Fatalf("an expired stall verdict must not exclude a server: %v", got)
+	}
+}
+
+func TestMergeProbeKeepsBulkVerdictUnlessRetested(t *testing.T) {
+	prev := managerconfig.ProbeResult{Bulk: "ok", BulkKBps: 900, BulkCheckedAt: "2026-01-01T00:00:00Z"}
+	got := mergeProbe(prev, health.EndpointResult{Health: "ok", LatencyMS: 80}, "2026-01-02T00:00:00Z")
+	if got.Bulk != "ok" || got.BulkKBps != 900 || got.LatencyMS != 80 {
+		t.Fatalf("delay-only merge lost the bulk verdict: %#v", got)
+	}
+	got = mergeProbe(prev, health.EndpointResult{Health: "ok", Bulk: &health.BulkResult{Bytes: 16384, Error: "stalls after 16 KB"}}, "2026-01-02T00:00:00Z")
+	if got.Bulk != "stalled" || got.BulkError != "stalls after 16 KB" || got.BulkCheckedAt != "2026-01-02T00:00:00Z" {
+		t.Fatalf("bulk merge = %#v", got)
 	}
 }

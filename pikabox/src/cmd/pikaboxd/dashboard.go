@@ -120,6 +120,8 @@ type healthItem struct {
 	History   []historyPoint `json:"history"`
 	Detail    string         `json:"detail,omitempty"`
 	Now       string         `json:"now,omitempty"`
+	// Stalled: answers delay probes but a fresh bulk download stalled.
+	Stalled string `json:"stalled,omitempty"`
 }
 
 type warning struct {
@@ -196,6 +198,9 @@ func healthRPC(configPath string, _ json.RawMessage) map[string]any {
 			item.Health, item.Error = "error", "invalid source"
 		} else if result, probed := results[id]; probed {
 			item.Health, item.LatencyMS, item.Error = result.Health, result.LatencyMS, result.Error
+			if result.Stalled() {
+				item.Stalled = result.BulkError
+			}
 		}
 		item.History, item.LastOK = probeHistory(id)
 		items = append(items, item)
@@ -318,7 +323,11 @@ func healthGraph(cfg *managerconfig.Config, plan render.Plan, items []healthItem
 		for _, tag := range state.Selected {
 			selected[tag] = true
 			result := results[tag]
-			add(graphNode{healthItem: healthItem{ID: tag, Name: names[tag], Kind: "server", Health: firstNonEmptyString(result.Health, "unknown"), LatencyMS: result.LatencyMS, Error: result.Error}})
+			node := healthItem{ID: tag, Name: names[tag], Kind: "server", Health: firstNonEmptyString(result.Health, "unknown"), LatencyMS: result.LatencyMS, Error: result.Error}
+			if result.Stalled() {
+				node.Stalled = result.BulkError
+			}
+			add(graphNode{healthItem: node})
 			link(id, tag, running && proxies[id].Now == tag)
 		}
 		if node, found := byID[id]; found {

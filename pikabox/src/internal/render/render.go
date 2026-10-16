@@ -131,7 +131,7 @@ func BuildPlan(cfg managerconfig.Config) Plan {
 	probes := managerconfig.LoadProbeResults()
 	firstAlive := func(members []string) string {
 		for _, member := range members {
-			if result, probed := probes[member]; !probed || result.Health == "ok" {
+			if result, probed := probes[member]; !probed || (result.Health == "ok" && !result.Stalled()) {
 				return member
 			}
 		}
@@ -538,6 +538,10 @@ const syntheticBootstrapTag = "domain-bootstrap"
 type ProbeAPI struct {
 	Listen string
 	Secret string
+	// BulkPort, when set, adds a local mixed inbound on 127.0.0.1:BulkPort with
+	// one user per outbound (username = password = tag) routed to exactly that
+	// outbound, so a bulk download can be pushed through any single outbound.
+	BulkPort int
 }
 
 // BuildProbeConfig renders a minimal sing-box config whose sole purpose is
@@ -559,6 +563,20 @@ func BuildProbeConfig(outbounds map[string]map[string]any, api ProbeAPI) ([]byte
 		"experimental": map[string]any{
 			"clash_api": map[string]any{"external_controller": api.Listen, "secret": api.Secret},
 		},
+	}
+	if api.BulkPort > 0 {
+		users := []map[string]any{}
+		rules := []map[string]any{}
+		for _, tag := range sortedKeys(outbounds) {
+			users = append(users, map[string]any{"username": tag, "password": tag})
+			rules = append(rules, map[string]any{"auth_user": []string{tag}, "outbound": tag})
+		}
+		document["inbounds"] = []map[string]any{{
+			"type": "mixed", "tag": "bulk-in", "listen": "127.0.0.1", "listen_port": api.BulkPort, "users": users,
+		}}
+		// Nothing unauthenticated may leak out of the probe: default to block.
+		document["outbounds"] = append(list, map[string]any{"type": "block", "tag": "probe-block"})
+		document["route"] = map[string]any{"rules": rules, "final": "probe-block"}
 	}
 	data, err := json.MarshalIndent(document, "", "  ")
 	if err != nil {

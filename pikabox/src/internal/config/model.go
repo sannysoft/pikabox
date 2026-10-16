@@ -44,6 +44,9 @@ type Manager struct {
 	ProbeInterval string
 	// TestURL is fetched through each outbound by every delay test.
 	TestURL string
+	// BulkTestURL is downloaded through outbounds in use to catch tunnels that
+	// pass delay tests but stall on volume (DPI throttling). Empty disables it.
+	BulkTestURL string
 }
 
 // Active reports whether the manager should keep sing-box and its firewall rules
@@ -283,6 +286,7 @@ func DefaultConfig() Config {
 			UpdateInterval: "24h",
 			ProbeInterval:  "10m",
 			TestURL:        "https://www.gstatic.com/generate_204",
+			BulkTestURL:    "https://speed.cloudflare.com/__down?bytes=262144",
 		},
 		Outbounds:      map[string]Outbound{},
 		Subscriptions:  map[string]Subscription{},

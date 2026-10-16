@@ -203,8 +203,10 @@ return view.extend({
 				row(_('Re-test interval'), _('How often every outbound and subscription server is delay-tested and each subscription re-picks its fastest servers. Minimum 1m.'),
 					input('probe_interval', s.probe_interval, { 'placeholder': '10m', 'style': 'max-width:120px' })),
 				row(_('Test URL'), _('Fetched through each outbound to measure latency. It must answer quickly with a small response (204 is ideal).'),
-					input('test_url', s.test_url, { 'placeholder': 'https://www.gstatic.com/generate_204' }))
-			], [ 'log_level', 'probe_interval', 'test_url' ]),
+					input('test_url', s.test_url, { 'placeholder': 'https://www.gstatic.com/generate_204' })),
+				row(_('Bulk test URL'), _('Downloaded through outbounds in use (about 256 KB, at most hourly each) to catch tunnels that pass latency tests but freeze on real traffic. Stalled servers are skipped by fastest/fallback picks. Type off to disable.'),
+					input('bulk_test_url', s.bulk_test_url, { 'placeholder': 'https://speed.cloudflare.com/__down?bytes=262144' }))
+			], [ 'log_level', 'probe_interval', 'test_url', 'bulk_test_url' ]),
 
 			settingsSection(view, _('Ports & paths'), [
 				row(_('Proxy listen address'), _('Mixed HTTP/SOCKS proxy inbound. 0.0.0.0 lets LAN devices use it directly; 127.0.0.1 keeps it on the router.'),

@@ -38,6 +38,10 @@ type ProbeOptions struct {
 	Timeout time.Duration
 	// Concurrency bounds simultaneous delay tests. Defaults to 16.
 	Concurrency int
+	// BulkURL, with BulkSelect, adds a bulk download check after the delay
+	// tests: BulkSelect sees the delay results and returns the tags to check.
+	BulkURL    string
+	BulkSelect func(map[string]EndpointResult) []string
 }
 
 // ProbeNodes delay-tests every node through its real outbound and returns a
@@ -82,6 +86,11 @@ func ProbeOutbounds(ctx context.Context, opts ProbeOptions, outbounds map[string
 		return markAll(results, outbounds, "error", fmt.Sprintf("generate probe secret: %v", err))
 	}
 	api := render.ProbeAPI{Listen: fmt.Sprintf("127.0.0.1:%d", port), Secret: secret}
+	if opts.BulkURL != "" && opts.BulkSelect != nil {
+		if api.BulkPort, err = freeLocalPort(); err != nil {
+			return markAll(results, outbounds, "error", fmt.Sprintf("allocate bulk port: %v", err))
+		}
+	}
 
 	dir, err := os.MkdirTemp("", "singbox-probe-")
 	if err != nil {
@@ -161,6 +170,29 @@ func ProbeOutbounds(ctx context.Context, opts ProbeOptions, outbounds map[string
 		}(tag)
 	}
 	wg.Wait()
+
+	if api.BulkPort > 0 {
+		tags := opts.BulkSelect(results)
+		bulkSem := make(chan struct{}, bulkConcurrency)
+		for _, tag := range tags {
+			if _, present := outbounds[tag]; !present {
+				continue
+			}
+			wg.Add(1)
+			go func(tag string) {
+				defer wg.Done()
+				bulkSem <- struct{}{}
+				defer func() { <-bulkSem }()
+				bulk := bulkCheck(runCtx, api.BulkPort, tag, opts.BulkURL)
+				mu.Lock()
+				result := results[tag]
+				result.Bulk = &bulk
+				results[tag] = result
+				mu.Unlock()
+			}(tag)
+		}
+		wg.Wait()
+	}
 	return results
 }
 

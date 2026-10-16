@@ -409,12 +409,14 @@ function sparkSmall(points) {
 var COLUMN_TITLES = [ _('Routes'), _('Targets'), _('Members'), _('Servers'), _('Servers') ];
 
 function graphNode(node, live) {
-	var down = node.health === 'down' || node.health === 'error';
+	var down = node.health === 'down' || node.health === 'error' || !!node.stalled;
 	var ms;
 	if (node.kind === 'rule')
 		ms = node.health === 'idle' ? E('span', { 'class': 'pkb-node-ms idle' }, [ _('off') ]) : '';
 	else if (node.kind === 'builtin')
 		ms = '';
+	else if (node.stalled)
+		ms = E('span', { 'class': 'pkb-node-ms down', 'title': _('Answers latency tests but freezes on real traffic') }, [ _('stalls') ]);
 	else if (node.health === 'ok' && node.latency_ms)
 		ms = E('span', { 'class': 'pkb-node-ms' }, [ node.latency_ms + ' ms' ]);
 	else if (node.health === 'idle')
@@ -433,6 +435,8 @@ function graphNode(node, live) {
 		foot = node.error || foot;
 	else if (down)
 		foot = _('ok %s').format(ago(node.last_ok));
+	if (node.stalled)
+		foot = _('%s on a 256 KB download').format(node.stalled);
 	if (node.unused)
 		foot = _('not used by any route');
 

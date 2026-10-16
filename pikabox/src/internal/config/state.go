@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 var (
@@ -76,7 +77,26 @@ type ProbeResult struct {
 	LatencyMS int    `json:"latency_ms,omitempty"`
 	Error     string `json:"error,omitempty"`
 	CheckedAt string `json:"checked_at"`
+	// Bulk is the latest bulk download check: "ok" or "stalled" ("" = never).
+	// Delay probes pass on a tunnel DPI throttles on volume; this catches it.
+	Bulk          string `json:"bulk,omitempty"`
+	BulkKBps      int    `json:"bulk_kbps,omitempty"`
+	BulkError     string `json:"bulk_error,omitempty"`
+	BulkCheckedAt string `json:"bulk_checked_at,omitempty"`
 }
+
+// BulkTTL is how long a bulk check result is trusted before it is redone.
+const BulkTTL = time.Hour
+
+// BulkFresh reports whether r carries a bulk check younger than BulkTTL.
+func (r ProbeResult) BulkFresh() bool {
+	at, err := time.Parse(time.RFC3339, r.BulkCheckedAt)
+	return r.Bulk != "" && err == nil && time.Since(at) < BulkTTL
+}
+
+// Stalled reports a fresh bulk check that failed: usable for delay probes,
+// unusable for real traffic.
+func (r ProbeResult) Stalled() bool { return r.BulkFresh() && r.Bulk == "stalled" }
 
 // DeviceID returns this router's HWID, generated once and kept in StateDir so
 // it survives reboots and upgrades (a new one would count as a new device).

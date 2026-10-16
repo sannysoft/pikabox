@@ -161,13 +161,16 @@ func probeAll(configPath string, subs []string, withOutbounds bool) map[string]m
 		}
 	}
 
-	opts := health.ProbeOptions{Binary: cfg.Manager.SingBoxBinary, TestURL: cfg.Manager.TestURL}
+	stored := managerconfig.LoadProbeResults()
+	opts := health.ProbeOptions{Binary: cfg.Manager.SingBoxBinary, TestURL: cfg.Manager.TestURL, BulkURL: bulkURL(cfg)}
+	opts.BulkSelect = func(delay map[string]health.EndpointResult) []string {
+		return bulkCandidates(cfg, states, delay, stored, withOutbounds)
+	}
 	results := health.ProbeOutbounds(context.Background(), opts, targets)
 
-	stored := managerconfig.LoadProbeResults()
 	now := time.Now().UTC().Format(time.RFC3339)
 	for tag, result := range results {
-		stored[tag] = managerconfig.ProbeResult{Health: result.Health, LatencyMS: result.LatencyMS, Error: result.Error, CheckedAt: now}
+		stored[tag] = mergeProbe(stored[tag], result, now)
 		recordProbe(tag, stored[tag])
 	}
 	// Forget results for candidates no longer matched by any subscription.
@@ -224,13 +227,81 @@ func probeAll(configPath string, subs []string, withOutbounds bool) map[string]m
 	return stored
 }
 
+// bulkURL is the configured bulk test URL, or "" when the check is off.
+func bulkURL(cfg *managerconfig.Config) string {
+	if u := strings.TrimSpace(cfg.Manager.BulkTestURL); u != "off" {
+		return u
+	}
+	return ""
+}
+
+// mergeProbe folds a fresh delay result into the stored one, keeping the
+// previous bulk verdict unless a bulk check ran this time.
+func mergeProbe(prev managerconfig.ProbeResult, r health.EndpointResult, now string) managerconfig.ProbeResult {
+	next := managerconfig.ProbeResult{Health: r.Health, LatencyMS: r.LatencyMS, Error: r.Error, CheckedAt: now,
+		Bulk: prev.Bulk, BulkKBps: prev.BulkKBps, BulkError: prev.BulkError, BulkCheckedAt: prev.BulkCheckedAt}
+	if r.Bulk != nil {
+		next.Bulk, next.BulkKBps, next.BulkError, next.BulkCheckedAt = "ok", r.Bulk.KBps, "", now
+		if !r.Bulk.OK {
+			next.Bulk, next.BulkError = "stalled", r.Bulk.Error
+		}
+	}
+	return next
+}
+
+// bulkCandidates picks what to bulk-check this round, keeping traffic small:
+// standalone outbounds that answered and have no fresh verdict, and per
+// subscription the fastest alive candidates until count (+1 spare) of them
+// are known to carry volume.
+// rdx: one round per probe; a selection that loses several servers to
+// stalls refills on the next probe interval.
+func bulkCandidates(cfg *managerconfig.Config, states map[string]managerconfig.SubscriptionState, delay map[string]health.EndpointResult, stored map[string]managerconfig.ProbeResult, withOutbounds bool) []string {
+	var pick []string
+	if withOutbounds {
+		for id := range cfg.Outbounds {
+			if delay[id].Health == "ok" && !stored[id].BulkFresh() {
+				pick = append(pick, id)
+			}
+		}
+	}
+	for id, state := range states {
+		var alive []string
+		for _, tag := range state.Matched {
+			if delay[tag].Health == "ok" {
+				alive = append(alive, tag)
+			}
+		}
+		sort.SliceStable(alive, func(i, j int) bool { return delay[alive[i]].LatencyMS < delay[alive[j]].LatencyMS })
+		need := cfg.Subscriptions[id].Count
+		if need <= 0 || need > 10 {
+			need = 10
+		}
+		need++
+		have := 0
+		for _, tag := range alive {
+			if have >= need {
+				break
+			}
+			if r := stored[tag]; r.BulkFresh() {
+				if r.Bulk == "ok" {
+					have++
+				}
+				continue
+			}
+			pick = append(pick, tag)
+			have++
+		}
+	}
+	return pick
+}
+
 // selectFastest returns up to count alive candidate IDs, fastest first
 // (count 0 = every alive candidate).
 // rdx: no hysteresis beyond set equality; add a latency margin if selections flap.
 func selectFastest(candidates []managerconfig.Candidate, results map[string]managerconfig.ProbeResult, count int) []string {
 	var alive []managerconfig.Candidate
 	for _, candidate := range candidates {
-		if results[candidate.ID].Health == "ok" {
+		if r := results[candidate.ID]; r.Health == "ok" && !r.Stalled() {
 			alive = append(alive, candidate)
 		}
 	}
@@ -397,6 +468,7 @@ func enforceFallback(cfg managerconfig.Config) {
 	if err != nil {
 		return
 	}
+	probes := managerconfig.LoadProbeResults()
 	testURL := firstNonEmptyString(cfg.Manager.TestURL, health.DefaultTestURL)
 	for group, members := range plan.Fallback {
 		target := members[len(members)-1] // nothing alive: park on the last
@@ -404,6 +476,11 @@ func enforceFallback(cfg managerconfig.Config) {
 			if member == "direct" || member == "block" {
 				target = member
 				break
+			}
+			// A member that answers delay probes but stalls on volume is no
+			// use for real traffic: treat it as down.
+			if probes[member].Stalled() {
+				continue
 			}
 			if _, err := api.delay(member, testURL); err == nil {
 				target = member
