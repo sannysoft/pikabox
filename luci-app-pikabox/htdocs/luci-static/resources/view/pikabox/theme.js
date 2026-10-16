@@ -330,6 +330,12 @@ var CSS = [
 	'.pkb-dirty.on{display:inline}',
 
 	/* ---- rule table editor ---- */
+	'.pkb-tester{display:flex;gap:10px;align-items:center;flex-wrap:wrap}',
+	'.pkb-tester .pkb-tester-input{flex:1 1 320px;width:auto}',
+	'.pkb-tester-out{display:grid;gap:8px}',
+	'.pkb-tester-out:empty{display:none}',
+	'.pkb-tester-line{display:flex;gap:8px;align-items:center;flex-wrap:wrap}',
+	'.pkb-arrow{color:var(--text-color-medium)}',
 	'.pkb-rules-tools{display:flex;gap:12px;flex-wrap:wrap;align-items:center;justify-content:space-between}',
 	'.pkb-presets{display:grid;gap:14px;max-height:56vh;overflow:auto;padding-right:4px}',
 	'.pkb-presets fieldset{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:6px;margin:0;padding:0;border:0}',

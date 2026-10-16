@@ -82,6 +82,7 @@ var methods = map[string]rpcMethod{
 	"rulesets_refresh":  {nil, probe, false, refreshRuleSets},
 
 	"routing":     {nil, quick, false, listRouting},
+	"route_test":  {map[string]any{"target": "string"}, 30 * time.Second, false, routeTestRPC},
 	"routing_set": {map[string]any{"final": "string", "routes": "array"}, 30 * time.Second, true, setRouting},
 
 	"dns":               {nil, quick, false, listDNS},

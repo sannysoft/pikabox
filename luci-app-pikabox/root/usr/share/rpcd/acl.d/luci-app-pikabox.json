@@ -13,6 +13,7 @@
 					"logs",
 					"outbound_groups",
 					"outbounds",
+					"route_test",
 					"routing",
 					"rule_groups",
 					"runtime_stats",

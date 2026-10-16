@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"net"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -261,5 +262,60 @@ func TestMergeProbeKeepsBulkVerdictUnlessRetested(t *testing.T) {
 	got = mergeProbe(prev, health.EndpointResult{Health: "ok", Bulk: &health.BulkResult{Bytes: 16384, Error: "stalls after 16 KB"}}, "2026-01-02T00:00:00Z")
 	if got.Bulk != "stalled" || got.BulkError != "stalls after 16 KB" || got.BulkCheckedAt != "2026-01-02T00:00:00Z" {
 		t.Fatalf("bulk merge = %#v", got)
+	}
+}
+
+func TestParseTarget(t *testing.T) {
+	cases := []struct {
+		in   string
+		host string
+		port int
+	}{
+		{"YouTube.com", "youtube.com", 0},
+		{"https://web.telegram.org/k/", "web.telegram.org", 443},
+		{"http://example.com:8080/x", "example.com", 8080},
+		{"1.2.3.4:53", "1.2.3.4", 53},
+		{"[2001:db8::1]:443", "2001:db8::1", 443},
+		{"2001:db8::1", "2001:db8::1", 0},
+	}
+	for _, c := range cases {
+		host, port, err := parseTarget(c.in)
+		if err != nil || host != c.host || port != c.port {
+			t.Errorf("parseTarget(%q) = %q %d %v, want %q %d", c.in, host, port, err, c.host, c.port)
+		}
+	}
+	if _, _, err := parseTarget("  "); err == nil {
+		t.Error("empty target must fail")
+	}
+}
+
+func TestMatchGroupFollowsSingBoxSemantics(t *testing.T) {
+	g := managerconfig.RuleGroup{ID: "g", Rules: []string{"domain_suffix:.ru", "domain_suffix:t.me", "domain_keyword:yandex", "ip_cidr:91.108.4.0/22", "port:853"}}
+	cfg := managerconfig.DefaultConfig()
+	var notes []string
+	cases := []struct {
+		host string
+		port int
+		ips  []string
+		want string
+	}{
+		{"mail.ru", 0, nil, "domain_suffix:.ru"},
+		{"ru", 0, nil, ""}, // ".ru" matches subdomains only
+		{"t.me", 0, nil, "domain_suffix:t.me"},
+		{"web.t.me", 0, nil, "domain_suffix:t.me"},
+		{"nott.me", 0, nil, ""},
+		{"music.yandex.net", 0, nil, "domain_keyword:yandex"},
+		{"telegram.org", 0, []string{"91.108.4.10"}, "ip_cidr:91.108.4.0/22"},
+		{"dns.example", 853, nil, "port:853"},
+		{"example.com", 443, []string{"93.184.216.34"}, ""},
+	}
+	for _, c := range cases {
+		var ips []netip.Addr
+		for _, s := range c.ips {
+			ips = append(ips, netip.MustParseAddr(s))
+		}
+		if got, _ := matchGroup(&cfg, g, c.host, c.port, ips, &notes); got != c.want {
+			t.Errorf("%s:%d matched %q, want %q", c.host, c.port, got, c.want)
+		}
 	}
 }

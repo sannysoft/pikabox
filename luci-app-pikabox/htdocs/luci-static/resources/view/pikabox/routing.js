@@ -7,6 +7,54 @@
 var callRouting = rpc.declare({ object: 'pikabox', method: 'routing', expect: { '': {} } });
 var callSetRouting = rpc.declare({ object: 'pikabox', method: 'routing_set', params: [ 'final', 'routes' ], expect: { '': {} } });
 var callSetMode = rpc.declare({ object: 'pikabox', method: 'manager_set_mode', params: [ 'mode' ], expect: { '': {} } });
+var callRouteTest = rpc.declare({ object: 'pikabox', method: 'route_test', params: [ 'target' ], expect: { '': {} } });
+
+// renderTester answers "where will this go?" for a domain, IP or URL using the
+// saved routes (not unsaved edits on this page).
+function renderTester(view) {
+	var input = E('input', { 'type': 'search', 'id': 'route-test-target', 'placeholder': _('youtube.com, 91.108.4.10 or a URL'), 'aria-label': _('Destination to check') });
+	var out = E('div', { 'class': 'pkb-tester-out', 'aria-live': 'polite' });
+	var run = function() {
+		var target = input.value.trim();
+		if (!target)
+			return Promise.resolve();
+		out.replaceChildren(E('span', { 'class': 'pikabox-hint' }, [ _('Checking…') ]));
+		return callRouteTest(target).then(function(r) {
+			if (!r || r.ok === false) {
+				out.replaceChildren(E('span', { 'class': 'pikabox-status-error' }, theme.text(((r && r.errors) || []).join('; ') || _('Check failed'))));
+				return;
+			}
+			var m = r.matched;
+			var head = m
+				? E('div', { 'class': 'pkb-tester-line' }, [
+					E('strong', {}, [ _('Route %d').format(m.position) ]),
+					theme.pill(m.rule_group_name, 'rule'),
+					E('span', { 'class': 'pikabox-hint' }, [ _('matched %s on %s').format(m.rule.indexOf('remote:') === 0 ? m.rule.replace(/^remote:.*\//, 'rule-set ') : m.rule, m.via) ])
+				])
+				: E('div', { 'class': 'pkb-tester-line' }, [ E('strong', {}, [ _('No route matched') ]), E('span', { 'class': 'pikabox-hint' }, [ _('goes to Everything else') ]) ]);
+			var chain = E('div', { 'class': 'pkb-tester-line' }, [ E('span', { 'class': 'pikabox-hint' }, [ _('Exit:') ]) ].concat((r.chain || []).reduce(function(acc, hop, i) {
+				if (i)
+					acc.push(E('span', { 'class': 'pkb-arrow', 'aria-hidden': 'true' }, [ '→' ]));
+				var kind = hop.kind === 'direct' || hop.kind === 'block' ? 'builtin' : hop.kind;
+				acc.push(theme.pill(hop.name + (hop.latency_ms ? ' · ' + hop.latency_ms + ' ms' : ''), kind));
+				return acc;
+			}, [])));
+			var facts = (r.ips && r.ips.length) ? E('div', { 'class': 'pikabox-hint' }, [ _('%s resolves to %s').format(r.host, r.ips.slice(0, 4).join(', ') + (r.ips.length > 4 ? '…' : '')) ]) : '';
+			var notes = (r.notes || []).map(function(n) { return E('div', { 'class': 'pikabox-hint' }, [ n ]); });
+			out.replaceChildren.apply(out, [ head, chain, facts ].concat(notes));
+		});
+	};
+	input.addEventListener('keydown', function(ev) { if (ev.key === 'Enter') { ev.preventDefault(); run(); } });
+	return E('div', { 'class': 'pikabox-section' }, [
+		E('div', { 'class': 'pikabox-section-header' }, [ E('h3', {}, _('Where will it go?')) ]),
+		E('div', { 'class': 'pkb-tester' }, [
+			E('label', { 'class': 'pkb-search pkb-tester-input' }, [ input ]),
+			E('button', { 'class': 'btn cbi-button cbi-button-action', 'click': ui.createHandlerFn(view, run) }, _('Check'))
+		]),
+		out,
+		E('p', { 'class': 'pikabox-hint', 'style': 'margin:0' }, _('Uses the saved routes. Domains are checked by name and by the address they resolve to, as transparent proxying sees them.'))
+	]);
+}
 
 function kindOf(targets, id) {
 	var t = (targets || []).filter(function(x) { return x.id === id; })[0];
@@ -115,6 +163,7 @@ return view.extend({
 		var finalSelect = targetSelect('final', data.targets, data.final || 'direct', changed);
 
 		var page = E('div', { 'class': 'pikabox-page' }, [
+			renderTester(view),
 			E('div', { 'class': 'pikabox-section' }, [
 				E('div', { 'class': 'pikabox-section-header' }, [
 					E('h3', {}, _('Routing')),
