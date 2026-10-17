@@ -15,6 +15,14 @@ config manager 'main'
 	option update_interval '24h'
 	option probe_interval '10m'
 	option test_url 'https://www.gstatic.com/generate_204'
+	# A fallback group moves off its active server when more than failover_rate
+	# percent of the connections it carried in failover_window failed to reach
+	# that server (judged from failover_min_attempts connections on). The server
+	# is retried after failover_cooldown, doubling on repeats up to 1h. 0 = off.
+	option failover_rate '5'
+	option failover_window '5m'
+	option failover_min_attempts '30'
+	option failover_cooldown '10m'
 
 # Outbounds: one proxy each; source is a share URI or a sing-box outbound JSON.
 # config outbound 'nl_vp1'

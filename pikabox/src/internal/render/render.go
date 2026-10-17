@@ -42,7 +42,22 @@ const CacheFilePath = "/etc/pikabox/cache.db"
 
 type logConfig struct {
 	Level     string `json:"level"`
+	Output    string `json:"output,omitempty"`
 	Timestamp bool   `json:"timestamp"`
+}
+
+// SingBoxLogPath is where sing-box writes its log. The daemon reads it to count
+// connections and failures per outbound (which needs at least info level) and
+// passes lines at the configured log_level on to the system log.
+const SingBoxLogPath = "/var/run/sing-box/sing-box.log"
+
+// logLevel is the configured level, but never less detailed than info.
+func logLevel(configured string) string {
+	switch configured {
+	case "trace", "debug":
+		return configured
+	}
+	return "info"
 }
 
 type dnsConfig struct {
@@ -220,7 +235,7 @@ func Render(cfg managerconfig.Config) ([]byte, error) {
 		experimental.ClashAPI = &clashAPIConfig{ExternalController: cfg.Manager.APIListen}
 	}
 	document := singBoxConfig{
-		Log:          logConfig{Level: cfg.Manager.LogLevel, Timestamp: true},
+		Log:          logConfig{Level: logLevel(cfg.Manager.LogLevel), Output: SingBoxLogPath, Timestamp: true},
 		DNS:          renderDNS(cfg, plan, final),
 		Inbounds:     renderInbounds(cfg),
 		Outbounds:    plan.Outbounds,

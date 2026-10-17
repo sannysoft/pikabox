@@ -245,6 +245,7 @@ type outboundView struct {
 	Error  string                     `json:"error,omitempty"`
 	Probe  *managerconfig.ProbeResult `json:"probe,omitempty"`
 	UsedBy []managerconfig.Usage      `json:"used_by"`
+	Dial   *dialView                  `json:"dial,omitempty"`
 }
 
 func listOutbounds(configPath string, _ json.RawMessage) map[string]any {
@@ -256,7 +257,7 @@ func listOutbounds(configPath string, _ json.RawMessage) map[string]any {
 	views := []outboundView{}
 	for _, id := range sortedIDs(cfg.Outbounds) {
 		outbound := cfg.Outbounds[id]
-		view := outboundView{Outbound: outbound, UsedBy: cfg.UsedBy(id)}
+		view := outboundView{Outbound: outbound, UsedBy: cfg.UsedBy(id), Dial: dialViewFor(*cfg, id)}
 		if item, err := subscription.ParseSource(outbound.Source); err != nil {
 			view.Error = err.Error()
 		} else {

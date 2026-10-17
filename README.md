@@ -32,7 +32,10 @@ live in UCI (`/etc/config/pikabox`) and are exposed over `ubus call pikabox …`
   interval, re-fetched on its own interval.
 - **Outbound groups** — named, ordered member lists (outbounds, subscriptions, other
   groups, direct/block). Mode *fastest* (sing-box `urltest`) or *fallback* (first alive in
-  written order — a selector driven by the daemon through the Clash API every 30 s).
+  written order — a selector driven by the daemon through the Clash API every 30 s). A
+  fallback group also moves off a server that answers latency tests but fails too many real
+  connections (over 5% in 5 min by default, counted from sing-box's log; failures beyond
+  the server are ignored), then retries it after a cooldown that doubles on repeats.
 - **Rule groups** — named sets of `type:value` rules, ORed: any sing-box match field
   (`domain`, `domain_suffix`, `domain_keyword`, `domain_regex`, `ip_cidr`, `port`,
   `protocol`, `process_name`, …) or `remote:<rule-set URL>` (downloaded through the tunnel

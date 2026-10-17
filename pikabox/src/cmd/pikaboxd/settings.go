@@ -31,16 +31,20 @@ func settingsRPC(configPath string, _ json.RawMessage) map[string]any {
 	m := cfg.Manager
 	return ok(
 		"settings", map[string]any{
-			"log_level":      m.LogLevel,
-			"probe_interval": m.ProbeInterval,
-			"test_url":       m.TestURL,
-			"bulk_test_url":  m.BulkTestURL,
-			"mixed_listen":   m.MixedListen,
-			"mixed_port":     m.MixedPort,
-			"tproxy_port":    m.TProxyPort,
-			"dns_port":       m.DNSPort,
-			"api_listen":     m.APIListen,
-			"sing_box_bin":   m.SingBoxBinary,
+			"log_level":             m.LogLevel,
+			"probe_interval":        m.ProbeInterval,
+			"test_url":              m.TestURL,
+			"bulk_test_url":         m.BulkTestURL,
+			"failover_rate":         m.FailoverRate,
+			"failover_window":       m.FailoverWindow,
+			"failover_min_attempts": m.FailoverMinAttempts,
+			"failover_cooldown":     m.FailoverCooldown,
+			"mixed_listen":          m.MixedListen,
+			"mixed_port":            m.MixedPort,
+			"tproxy_port":           m.TProxyPort,
+			"dns_port":              m.DNSPort,
+			"api_listen":            m.APIListen,
+			"sing_box_bin":          m.SingBoxBinary,
 		},
 		"versions", map[string]string{
 			"pikabox":  version,
@@ -78,17 +82,21 @@ func singBoxVersion(binary string) string {
 // settingsPayload is every app-wide option the Settings page edits; a nil
 // field is left unchanged.
 type settingsPayload struct {
-	LogLevel      *string `json:"log_level"`
-	ProbeInterval *string `json:"probe_interval"`
-	TestURL       *string `json:"test_url"`
-	BulkTestURL   *string `json:"bulk_test_url"`
-	DNSFinal      *string `json:"dns_final"`
-	MixedListen   *string `json:"mixed_listen"`
-	MixedPort     *string `json:"mixed_port"`
-	TProxyPort    *string `json:"tproxy_port"`
-	DNSPort       *string `json:"dns_port"`
-	APIListen     *string `json:"api_listen"`
-	SingBoxBinary *string `json:"sing_box_bin"`
+	LogLevel            *string `json:"log_level"`
+	ProbeInterval       *string `json:"probe_interval"`
+	TestURL             *string `json:"test_url"`
+	BulkTestURL         *string `json:"bulk_test_url"`
+	FailoverRate        *string `json:"failover_rate"`
+	FailoverWindow      *string `json:"failover_window"`
+	FailoverMinAttempts *string `json:"failover_min_attempts"`
+	FailoverCooldown    *string `json:"failover_cooldown"`
+	DNSFinal            *string `json:"dns_final"`
+	MixedListen         *string `json:"mixed_listen"`
+	MixedPort           *string `json:"mixed_port"`
+	TProxyPort          *string `json:"tproxy_port"`
+	DNSPort             *string `json:"dns_port"`
+	APIListen           *string `json:"api_listen"`
+	SingBoxBinary       *string `json:"sing_box_bin"`
 }
 
 func (p *settingsPayload) UnmarshalJSON(data []byte) error {
@@ -105,7 +113,7 @@ func (p *settingsPayload) UnmarshalJSON(data []byte) error {
 		var s string
 		switch v := value.(type) {
 		case float64:
-			s = strconv.Itoa(int(v))
+			s = strconv.FormatFloat(v, 'f', -1, 64) // ports, or a fractional failover rate
 		default:
 			s = fmt.Sprint(v)
 		}
@@ -117,6 +125,8 @@ func (p *settingsPayload) UnmarshalJSON(data []byte) error {
 		DNSFinal: str("dns_final"), MixedListen: str("mixed_listen"), MixedPort: str("mixed_port"),
 		TProxyPort: str("tproxy_port"), DNSPort: str("dns_port"), APIListen: str("api_listen"),
 		SingBoxBinary: str("sing_box_bin"),
+		FailoverRate:  str("failover_rate"), FailoverWindow: str("failover_window"),
+		FailoverMinAttempts: str("failover_min_attempts"), FailoverCooldown: str("failover_cooldown"),
 	}
 	return nil
 }
@@ -141,7 +151,9 @@ func setSettings(configPath string, raw json.RawMessage) map[string]any {
 		"log_level": settings.LogLevel, "probe_interval": settings.ProbeInterval, "test_url": settings.TestURL, "bulk_test_url": settings.BulkTestURL,
 		"dns_final": settings.DNSFinal, "mixed_listen": settings.MixedListen, "mixed_port": settings.MixedPort,
 		"tproxy_port": settings.TProxyPort, "dns_port": settings.DNSPort, "api_listen": settings.APIListen,
-		"sing_box_bin": settings.SingBoxBinary,
+		"sing_box_bin":  settings.SingBoxBinary,
+		"failover_rate": settings.FailoverRate, "failover_window": settings.FailoverWindow,
+		"failover_min_attempts": settings.FailoverMinAttempts, "failover_cooldown": settings.FailoverCooldown,
 	} {
 		if value == nil {
 			continue

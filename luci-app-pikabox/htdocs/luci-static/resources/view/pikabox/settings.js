@@ -208,6 +208,18 @@ return view.extend({
 					input('bulk_test_url', s.bulk_test_url, { 'placeholder': 'https://speed.cloudflare.com/__down?bytes=262144' }))
 			], [ 'log_level', 'probe_interval', 'test_url', 'bulk_test_url' ]),
 
+			settingsSection(view, _('Failing servers'), [
+				E('p', { 'class': 'pikabox-hint' }, _('A fallback group moves off its current server when too many of the connections it carries fail to reach that server, even while latency tests still pass. Failures beyond the server (a site that is down) are not counted.')),
+				row(_('Failure threshold'), _('Share of failed connections, in percent, that sets a server aside. 0 turns this off.'),
+					input('failover_rate', s.failover_rate, { 'type': 'number', 'min': '0', 'max': '100', 'step': '0.5', 'placeholder': '5', 'style': 'max-width:120px' })),
+				row(_('Measured over'), _('Rolling window the share is measured over. Minimum 1m.'),
+					input('failover_window', s.failover_window, { 'placeholder': '5m', 'style': 'max-width:120px' })),
+				row(_('Minimum connections'), _('Connections the window needs before the share counts, so a quiet spell cannot trigger a switch.'),
+					input('failover_min_attempts', s.failover_min_attempts, { 'type': 'number', 'min': '1', 'placeholder': '30', 'style': 'max-width:120px' })),
+				row(_('Set aside for'), _('How long a server waits before it is tried again. Doubles each time it fails again, up to 1h.'),
+					input('failover_cooldown', s.failover_cooldown, { 'placeholder': '10m', 'style': 'max-width:120px' }))
+			], [ 'failover_rate', 'failover_window', 'failover_min_attempts', 'failover_cooldown' ]),
+
 			settingsSection(view, _('Ports & paths'), [
 				row(_('Proxy listen address'), _('Mixed HTTP/SOCKS proxy inbound. 0.0.0.0 lets LAN devices use it directly; 127.0.0.1 keeps it on the router.'),
 					input('mixed_listen', s.mixed_listen, { 'placeholder': '0.0.0.0', 'style': 'max-width:180px' })),

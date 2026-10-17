@@ -200,6 +200,7 @@ func runServe(args []string) {
 
 	startProbeScheduler(*configPath)
 	startFallbackController(*configPath)
+	startDialStats(*configPath)
 	startRuntimeSupervisor(*configPath)
 	startSignalCleanup(*configPath)
 

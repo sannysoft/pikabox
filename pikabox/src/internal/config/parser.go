@@ -5,6 +5,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type section struct {
@@ -267,6 +268,7 @@ func applyManager(cfg *Config, sec section) error {
 		"sing_box_bin": true, "socket_path": true, "api_listen": true,
 		"mixed_listen": true, "mixed_port": true, "tproxy_port": true, "dns_port": true,
 		"update_interval": true, "final": true, "dns_final": true, "probe_interval": true, "test_url": true, "bulk_test_url": true,
+		"failover_rate": true, "failover_window": true, "failover_min_attempts": true, "failover_cooldown": true,
 	}
 	if err := rejectUnknownOptions(sec, allowed); err != nil {
 		return err
@@ -312,6 +314,24 @@ func applyManager(cfg *Config, sec section) error {
 			cfg.Manager.TestURL = value
 		case "bulk_test_url":
 			cfg.Manager.BulkTestURL = value
+		case "failover_rate":
+			cfg.Manager.FailoverRate, err = strconv.ParseFloat(value, 64)
+			if err != nil || cfg.Manager.FailoverRate < 0 || cfg.Manager.FailoverRate > 100 {
+				err = fmt.Errorf("line %d: option %s must be a percentage from 0 to 100, got %q", sec.line, key, value)
+			}
+		case "failover_window", "failover_cooldown":
+			if d, perr := time.ParseDuration(value); perr != nil || d < time.Minute {
+				err = fmt.Errorf("line %d: option %s must be a duration of at least 1m (e.g. 5m), got %q", sec.line, key, value)
+			} else if key == "failover_window" {
+				cfg.Manager.FailoverWindow = value
+			} else {
+				cfg.Manager.FailoverCooldown = value
+			}
+		case "failover_min_attempts":
+			cfg.Manager.FailoverMinAttempts, err = strconv.Atoi(value)
+			if err != nil || cfg.Manager.FailoverMinAttempts < 1 {
+				err = fmt.Errorf("line %d: option %s must be a whole number of at least 1, got %q", sec.line, key, value)
+			}
 		}
 		if err != nil {
 			return err

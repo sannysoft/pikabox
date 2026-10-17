@@ -470,31 +470,38 @@ func enforceFallback(cfg managerconfig.Config) {
 	}
 	probes := managerconfig.LoadProbeResults()
 	testURL := firstNonEmptyString(cfg.Manager.TestURL, health.DefaultTestURL)
+	now := time.Now()
 	for group, members := range plan.Fallback {
-		target := members[len(members)-1] // nothing alive: park on the last
-		for _, member := range members {
-			if member == "direct" || member == "block" {
-				target = member
-				break
-			}
+		active := proxies[group].Now
+		reason := failoverCheck(cfg, plan, active, now)
+		alive := func(member string) bool {
 			// A member that answers delay probes but stalls on volume is no
 			// use for real traffic: treat it as down.
 			if probes[member].Stalled() {
-				continue
+				return false
 			}
-			if _, err := api.delay(member, testURL); err == nil {
-				target = member
-				break
-			}
+			_, err := api.delay(member, testURL)
+			return err == nil
 		}
-		if proxies[group].Now == target {
+		cooling := func(member string) bool {
+			_, set := coolingDown(member, now)
+			return set
+		}
+		target := pickFallback(members, alive, cooling)
+		if active == target {
+			if reason != "" {
+				recordEvent("error", "%s: %s %s, but no other member is available", cfg.OutboundGroups[group].Name, displayName(&cfg, active), reason)
+			}
 			continue
 		}
 		if err := api.choose(group, target); err != nil {
 			recordEvent("error", "fallback %s: %v", group, err)
 			continue
 		}
-		recordEvent("switch", "%s switched to %s (was %s)", cfg.OutboundGroups[group].Name, displayName(&cfg, target), displayName(&cfg, firstNonEmptyString(proxies[group].Now, "—")))
+		if reason != "" {
+			reason = ": " + displayName(&cfg, active) + " " + reason
+		}
+		recordEvent("switch", "%s switched to %s (was %s)%s", cfg.OutboundGroups[group].Name, displayName(&cfg, target), displayName(&cfg, firstNonEmptyString(active, "—")), reason)
 	}
 }
 

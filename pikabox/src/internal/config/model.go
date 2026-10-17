@@ -47,6 +47,17 @@ type Manager struct {
 	// BulkTestURL is downloaded through outbounds in use to catch tunnels that
 	// pass delay tests but stall on volume (DPI throttling). Empty disables it.
 	BulkTestURL string
+	// FailoverRate is the share of failed connections (percent) to its own
+	// server at which a fallback group's active member is set aside. 0 disables.
+	FailoverRate float64
+	// FailoverWindow is the rolling window the failure share is measured over.
+	FailoverWindow string
+	// FailoverMinAttempts is how many connections the window needs before the
+	// share is judged, so a quiet spell cannot trigger a switch.
+	FailoverMinAttempts int
+	// FailoverCooldown is how long a set-aside member waits before it is tried
+	// again; it doubles on each repeat, up to an hour.
+	FailoverCooldown string
 }
 
 // Active reports whether the manager should keep sing-box and its firewall rules
@@ -287,6 +298,11 @@ func DefaultConfig() Config {
 			ProbeInterval:  "10m",
 			TestURL:        "https://www.gstatic.com/generate_204",
 			BulkTestURL:    "https://speed.cloudflare.com/__down?bytes=262144",
+
+			FailoverRate:        5,
+			FailoverWindow:      "5m",
+			FailoverMinAttempts: 30,
+			FailoverCooldown:    "10m",
 		},
 		Outbounds:      map[string]Outbound{},
 		Subscriptions:  map[string]Subscription{},

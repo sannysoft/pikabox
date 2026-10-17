@@ -46,6 +46,20 @@ function usedBy(usages) {
 	}));
 }
 
+function dialCell(dial) {
+	var parts = [];
+	if (dial && dial.attempts) {
+		var pct = dial.failures * 100 / dial.attempts;
+		parts.push(E('span', {
+			'class': dial.failures ? (pct >= 5 ? 'pikabox-status-error' : '') : 'pikabox-hint',
+			'title': _('%d of %d connections failed in the last %s').format(dial.failures, dial.attempts, dial.window)
+		}, [ '%s%%'.format(pct < 10 ? pct.toFixed(1) : Math.round(pct)) ]));
+	}
+	if (dial && dial.cooling_until)
+		parts.push(E('div', { 'class': 'pikabox-status-error', 'style': 'font-size:12px' }, _('set aside until %s').format(new Date(dial.cooling_until).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))));
+	return parts.length ? E('div', {}, parts) : E('span', { 'class': 'pikabox-hint' }, '—');
+}
+
 function renderTable(view, outbounds) {
 	return E('table', { 'class': 'pikabox-table' }, [
 		E('thead', {}, E('tr', {}, [
@@ -56,6 +70,7 @@ function renderTable(view, outbounds) {
 			E('th', {}, _('Used by')),
 			E('th', {}, _('Latency')),
 			E('th', { 'title': _('256 KB download through the outbound, re-checked hourly') }, _('Bulk')),
+			E('th', { 'title': _('Connections through this outbound that could not reach its server, over the recent window') }, _('Failed')),
 			E('th', {}, _('Checked')),
 			E('th', {}, _('Enabled')),
 			E('th', {}, '')
@@ -70,6 +85,7 @@ function renderTable(view, outbounds) {
 				E('td', {}, usedBy(ob.used_by)),
 				E('td', {}, theme.latency(probe.latency_ms, probe.health, probe.error)),
 				E('td', {}, theme.bulk(probe.bulk, probe.bulk_kbps, probe.bulk_error)),
+				E('td', {}, dialCell(ob.dial)),
 				E('td', {}, theme.timeAgo(probe.checked_at, _('never'))),
 				E('td', {}, ob.enabled ? _('Yes') : _('No')),
 				E('td', {}, E('div', { 'class': 'pikabox-actions' }, [
@@ -87,7 +103,7 @@ function renderTable(view, outbounds) {
 					}) }, _('Delete'))
 				]))
 			]);
-		}) : E('tr', {}, E('td', { 'colspan': 10 }, _('No outbounds yet'))))
+		}) : E('tr', {}, E('td', { 'colspan': 11 }, _('No outbounds yet'))))
 	]);
 }
 
