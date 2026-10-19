@@ -205,8 +205,12 @@ return view.extend({
 				row(_('Test URL'), _('Fetched through each outbound to measure latency. It must answer quickly with a small response (204 is ideal).'),
 					input('test_url', s.test_url, { 'placeholder': 'https://www.gstatic.com/generate_204' })),
 				row(_('Bulk test URL'), _('Downloaded through outbounds in use (about 256 KB, at most hourly each) to catch tunnels that pass latency tests but freeze on real traffic. Stalled servers are skipped by fastest/fallback picks. Type off to disable.'),
-					input('bulk_test_url', s.bulk_test_url, { 'placeholder': 'https://speed.cloudflare.com/__down?bytes=262144' }))
-			], [ 'log_level', 'probe_interval', 'test_url', 'bulk_test_url' ]),
+					input('bulk_test_url', s.bulk_test_url, { 'placeholder': 'https://speed.cloudflare.com/__down?bytes=262144' })),
+				row(_('Speed test URL'), _('Downloaded for about 4 s (at most 10 MB) through outbounds chosen by speed: members of "fastest by speed" groups and servers of subscriptions picked by speed. Use a large file. Type off to disable.'),
+					input('speed_test_url', s.speed_test_url, { 'placeholder': 'https://speed.cloudflare.com/__down?bytes=10000000' })),
+				row(_('Speed test interval'), _('How long a speed result is trusted before the outbound is tested again. Minimum 30m; each test uses up to 10 MB.'),
+					input('speed_interval', s.speed_interval, { 'placeholder': '3h', 'style': 'max-width:120px' }))
+			], [ 'log_level', 'probe_interval', 'test_url', 'bulk_test_url', 'speed_test_url', 'speed_interval' ]),
 
 			settingsSection(view, _('Failing servers'), [
 				E('p', { 'class': 'pikabox-hint' }, _('A fallback group moves off its current server when too many of the connections it carries fail to reach that server, even while latency tests still pass. Failures beyond the server (a site that is down) are not counted.')),

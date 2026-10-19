@@ -122,11 +122,11 @@ func TestSelectFastest(t *testing.T) {
 		{10, []string{"s.c", "s.d", "s.a"}},
 	}
 	for _, tc := range cases {
-		if got := selectFastest(candidates, results, tc.count); !reflect.DeepEqual(got, tc.want) {
+		if got := selectFastest(candidates, results, tc.count, false, time.Hour); !reflect.DeepEqual(got, tc.want) {
 			t.Errorf("selectFastest(count=%d) = %v, want %v", tc.count, got, tc.want)
 		}
 	}
-	if got := selectFastest(candidates, nil, 3); len(got) != 0 {
+	if got := selectFastest(candidates, nil, 3, false, time.Hour); len(got) != 0 {
 		t.Errorf("no results must select nothing, got %v", got)
 	}
 }
@@ -243,12 +243,12 @@ func TestStalledCandidatesAreNotSelected(t *testing.T) {
 		"s.mid":  {Health: "ok", LatencyMS: 90, Bulk: "ok", BulkCheckedAt: now},
 		"s.slow": {Health: "ok", LatencyMS: 300},
 	}
-	if got := selectFastest(cands, results, 2); !reflect.DeepEqual(got, []string{"s.mid", "s.slow"}) {
+	if got := selectFastest(cands, results, 2, false, time.Hour); !reflect.DeepEqual(got, []string{"s.mid", "s.slow"}) {
 		t.Fatalf("selected = %v: a stalled server must be skipped despite lowest latency", got)
 	}
 	old := time.Now().Add(-2 * time.Hour).UTC().Format(time.RFC3339)
 	results["s.fast"] = managerconfig.ProbeResult{Health: "ok", LatencyMS: 50, Bulk: "stalled", BulkCheckedAt: old}
-	if got := selectFastest(cands, results, 1); !reflect.DeepEqual(got, []string{"s.fast"}) {
+	if got := selectFastest(cands, results, 1, false, time.Hour); !reflect.DeepEqual(got, []string{"s.fast"}) {
 		t.Fatalf("an expired stall verdict must not exclude a server: %v", got)
 	}
 }

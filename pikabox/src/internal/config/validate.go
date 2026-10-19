@@ -63,14 +63,17 @@ func Validate(cfg Config) error {
 		if !inSet(subscription.Format, "auto", "base64", "plain") {
 			errors = append(errors, fmt.Sprintf("subscription.%s.format is unsupported: %q", id, subscription.Format))
 		}
+		if !inSet(subscription.SelectBy, "", "latency", "speed") {
+			errors = append(errors, fmt.Sprintf("subscription.%s.select_by must be latency or speed, got %q", id, subscription.SelectBy))
+		}
 		if err := CompileFilter(subscription.Filter); err != nil {
 			errors = append(errors, fmt.Sprintf("subscription.%s.filter: %v", id, err))
 		}
 	}
 
 	for id, group := range cfg.OutboundGroups {
-		if !inSet(group.Mode, "urltest", "fallback") {
-			errors = append(errors, fmt.Sprintf("outbound_group.%s.mode must be urltest or fallback, got %q", id, group.Mode))
+		if !inSet(group.Mode, "urltest", "fallback", "speed") {
+			errors = append(errors, fmt.Sprintf("outbound_group.%s.mode must be urltest, fallback or speed, got %q", id, group.Mode))
 		}
 		for _, member := range group.Members {
 			if cfg.Kind(member) == "" {

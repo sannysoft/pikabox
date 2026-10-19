@@ -58,6 +58,12 @@ type Manager struct {
 	// FailoverCooldown is how long a set-aside member waits before it is tried
 	// again; it doubles on each repeat, up to an hour.
 	FailoverCooldown string
+	// SpeedTestURL is downloaded through outbounds that are chosen by speed (a
+	// "speed" group's members, a speed-picked subscription's servers) to
+	// measure Mb/s. "off" disables the test.
+	SpeedTestURL string
+	// SpeedInterval is how long a speed result is trusted before it is redone.
+	SpeedInterval string
 }
 
 // Active reports whether the manager should keep sing-box and its firewall rules
@@ -95,7 +101,10 @@ type Subscription struct {
 	UserAgent string `json:"user_agent"`
 	// HWID sends this router's stable device ID (x-hwid and friends) for
 	// panels that enforce a per-device limit. It registers a device there.
-	HWID           bool   `json:"hwid"`
+	HWID bool `json:"hwid"`
+	// SelectBy ranks alive servers for the top-Count pick: "latency" (default)
+	// or "speed" (measured Mb/s; untested servers rank after tested ones).
+	SelectBy       string `json:"select_by"`
 	UpdateInterval string `json:"update_interval"`
 	LastUpdate     string `json:"last_update"`
 	LastError      string `json:"last_error"`
@@ -103,8 +112,9 @@ type Subscription struct {
 
 // OutboundGroup is a named, ordered set of members. A member is the ID of an
 // outbound, a subscription (expanding to its selected outbounds, fastest
-// first), or another outbound group. Mode "urltest" uses the fastest member;
-// "fallback" uses the first alive member in the written order.
+// first), or another outbound group. Mode "urltest" uses the lowest-latency
+// member; "fallback" uses the first alive member in the written order; "speed"
+// uses the alive member with the highest measured Mb/s.
 type OutboundGroup struct {
 	ID      string   `json:"id"`
 	Enabled bool     `json:"enabled"`
@@ -303,6 +313,9 @@ func DefaultConfig() Config {
 			FailoverWindow:      "5m",
 			FailoverMinAttempts: 30,
 			FailoverCooldown:    "10m",
+
+			SpeedTestURL:  "https://speed.cloudflare.com/__down?bytes=10000000",
+			SpeedInterval: "3h",
 		},
 		Outbounds:      map[string]Outbound{},
 		Subscriptions:  map[string]Subscription{},

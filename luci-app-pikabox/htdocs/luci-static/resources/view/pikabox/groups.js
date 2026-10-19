@@ -9,7 +9,8 @@ var callSet = rpc.declare({ object: 'pikabox', method: 'outbound_group_set', par
 var callDelete = rpc.declare({ object: 'pikabox', method: 'outbound_group_delete', params: [ 'id' ], expect: { '': {} } });
 
 var MODES = [
-	{ id: 'urltest', name: _('Fastest (urltest)') },
+	{ id: 'urltest', name: _('Fastest by latency (urltest)') },
+	{ id: 'speed', name: _('Fastest by speed (Mb/s)') },
 	{ id: 'fallback', name: _('First alive, in order (fallback)') }
 ];
 
@@ -24,7 +25,7 @@ function showModal(view, data, row) {
 			E('div', { 'class': 'pikabox-label', 'style': 'margin-bottom:6px' }, _('Members — drag to set the order (fallback tries them top to bottom)')),
 			theme.orderedList(row.members || [], options)
 		]),
-		E('p', { 'class': 'pikabox-inline-help' }, _('A subscription member stands for its N fastest filtered outbounds (fastest of them is used). Groups can nest. Fallback probes members in order every 30 s and switches to the first one that answers.'))
+		E('p', { 'class': 'pikabox-inline-help' }, _('A subscription member stands for its N fastest filtered outbounds (fastest of them is used). Groups can nest. Fallback probes members in order every 30 s and switches to the first one that answers. Fastest by speed uses the alive member with the highest measured download speed (re-measured every speed interval, see Settings) and only switches when another is at least 25% faster.'))
 	], function(root) {
 		return callSet({
 			id: row.id || '',
@@ -38,7 +39,8 @@ function showModal(view, data, row) {
 
 function renderMembers(group) {
 	return E('div', { 'class': 'pikabox-members' }, (group.member_info || []).length ? group.member_info.map(function(m, i) {
-		var label = (group.mode === 'fallback' ? (i + 1) + '. ' : '') + (m.name || m.id) + (m.latency_ms ? ' · ' + m.latency_ms + ' ms' : '');
+		var label = (group.mode === 'fallback' ? (i + 1) + '. ' : '') + (m.name || m.id) + (m.latency_ms ? ' · ' + m.latency_ms + ' ms' : '') +
+			(m.speed_mbps ? ' · ' + (m.speed_mbps >= 10 ? Math.round(m.speed_mbps) : m.speed_mbps.toFixed(1)) + ' Mb/s' : '');
 		var chip = theme.pill(label, m.kind, m.available ? (m.id === group.now ? _('In use now') : '') : _('Not available (disabled, broken, or nothing selected)'));
 		if (m.id === group.now)
 			chip.style.boxShadow = '0 0 0 2px #2271b1';
@@ -65,7 +67,7 @@ function renderTable(view, data) {
 					E('div', {}, [ E('strong', {}, theme.text(g.name)), g.enabled ? '' : E('span', { 'class': 'pikabox-badge off', 'style': 'margin-left:6px' }, _('disabled')) ]),
 					E('div', { 'class': 'pikabox-hint pikabox-mono' }, theme.text(g.id))
 				]),
-				E('td', {}, theme.text(g.mode === 'fallback' ? _('fallback') : _('fastest'))),
+				E('td', {}, theme.text(theme.modeName(g.mode))),
 				E('td', {}, renderMembers(g)),
 				E('td', {}, g.available ? theme.text(g.now || _('(not running)')) : E('span', { 'class': 'pikabox-status-error' }, _('unavailable'))),
 				E('td', {}, theme.latency(g.latency_ms)),

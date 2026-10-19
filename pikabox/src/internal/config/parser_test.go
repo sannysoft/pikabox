@@ -191,7 +191,7 @@ func TestValidate(t *testing.T) {
 		}, `outbound_group.g.member references missing "ghost"`},
 		{"bad mode", func(c *Config) {
 			c.OutboundGroups["g"] = OutboundGroup{ID: "g", Mode: "roundrobin"}
-		}, "mode must be urltest or fallback"},
+		}, "mode must be urltest, fallback or speed"},
 		{"cycle", func(c *Config) {
 			c.OutboundGroups["g1"] = OutboundGroup{ID: "g1", Mode: "urltest", Members: []string{"g2"}}
 			c.OutboundGroups["g2"] = OutboundGroup{ID: "g2", Mode: "urltest", Members: []string{"g1"}}

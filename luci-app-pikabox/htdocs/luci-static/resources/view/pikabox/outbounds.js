@@ -70,6 +70,7 @@ function renderTable(view, outbounds) {
 			E('th', {}, _('Used by')),
 			E('th', {}, _('Latency')),
 			E('th', { 'title': _('256 KB download through the outbound, re-checked hourly') }, _('Bulk')),
+			E('th', { 'title': _('Download speed, measured when something chooses this outbound by speed') }, _('Speed')),
 			E('th', { 'title': _('Connections through this outbound that could not reach its server, over the recent window') }, _('Failed')),
 			E('th', {}, _('Checked')),
 			E('th', {}, _('Enabled')),
@@ -85,6 +86,7 @@ function renderTable(view, outbounds) {
 				E('td', {}, usedBy(ob.used_by)),
 				E('td', {}, theme.latency(probe.latency_ms, probe.health, probe.error)),
 				E('td', {}, theme.bulk(probe.bulk, probe.bulk_kbps, probe.bulk_error)),
+				E('td', {}, theme.speed(probe.speed_mbps, probe.speed_error, probe.speed_checked_at)),
 				E('td', {}, dialCell(ob.dial)),
 				E('td', {}, theme.timeAgo(probe.checked_at, _('never'))),
 				E('td', {}, ob.enabled ? _('Yes') : _('No')),
@@ -103,7 +105,7 @@ function renderTable(view, outbounds) {
 					}) }, _('Delete'))
 				]))
 			]);
-		}) : E('tr', {}, E('td', { 'colspan': 11 }, _('No outbounds yet'))))
+		}) : E('tr', {}, E('td', { 'colspan': 12 }, _('No outbounds yet'))))
 	]);
 }
 

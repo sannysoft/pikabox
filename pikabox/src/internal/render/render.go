@@ -86,6 +86,9 @@ type Plan struct {
 	Rendered map[string]bool
 	// Fallback maps each fallback-mode group tag to its ordered members.
 	Fallback map[string][]string
+	// Speed maps each speed-mode group tag to its members. Like fallback
+	// groups they render as selectors the daemon drives.
+	Speed    map[string][]string
 	Warnings []string
 }
 
@@ -101,6 +104,7 @@ func BuildPlan(cfg managerconfig.Config) Plan {
 		Outbounds: []map[string]any{{"type": "direct", "tag": "direct"}, {"type": "block", "tag": "block"}},
 		Rendered:  map[string]bool{"direct": true, "block": true},
 		Fallback:  map[string][]string{},
+		Speed:     map[string][]string{},
 	}
 	warn := func(format string, args ...any) { plan.Warnings = append(plan.Warnings, fmt.Sprintf(format, args...)) }
 	testURL := firstNonEmptyString(cfg.Manager.TestURL, "https://www.gstatic.com/generate_204")
@@ -180,7 +184,7 @@ func BuildPlan(cfg managerconfig.Config) Plan {
 			warn("outbound group %s has no available members", id)
 			return
 		}
-		if group.Mode == "fallback" {
+		if group.Mode == "fallback" || group.Mode == "speed" {
 			plan.Outbounds = append(plan.Outbounds, map[string]any{
 				"type":                        "selector",
 				"tag":                         id,
@@ -188,7 +192,11 @@ func BuildPlan(cfg managerconfig.Config) Plan {
 				"default":                     firstAlive(members),
 				"interrupt_exist_connections": true,
 			})
-			plan.Fallback[id] = members
+			if group.Mode == "speed" {
+				plan.Speed[id] = members
+			} else {
+				plan.Fallback[id] = members
+			}
 		} else {
 			plan.Outbounds = append(plan.Outbounds, urltest(id, members, testURL))
 		}

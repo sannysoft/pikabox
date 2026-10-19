@@ -358,9 +358,11 @@ function renderPath(data) {
 			parts.push(wrap);
 			var meta = [];
 			if (hop.detail)
-				meta.push(hop.detail === 'fallback' ? _('first alive') : _('fastest'));
+				meta.push(theme.modeName(hop.detail));
 			if (hop.latency_ms)
 				meta.push(hop.latency_ms + ' ms');
+			if (hop.speed_mbps)
+				meta.push((hop.speed_mbps >= 10 ? Math.round(hop.speed_mbps) : hop.speed_mbps.toFixed(1)) + ' Mb/s');
 			wrap.appendChild(E('div', { 'class': 'pkb-hop' + (leaf ? ' pkb-leaf' : '') }, [
 				theme.pill(hop.name, hopKind(hop.kind) === 'direct' || hopKind(hop.kind) === 'block' ? 'builtin' : hopKind(hop.kind)),
 				E('span', { 'class': 'pkb-hop-meta' }, [ meta.join(' · ') || (leaf ? _('exit') : '') ])
@@ -428,7 +430,7 @@ function graphNode(node, live) {
 
 	var foot = node.detail || '';
 	if (node.kind === 'group')
-		foot = (node.detail === 'fallback' ? _('first alive') : _('fastest')) + (node.now ? ' · ' + _('using %s').format(node.now) : '');
+		foot = theme.modeName(node.detail) + (node.now ? ' · ' + _('using %s').format(node.now) : '');
 	if (node.more)
 		foot = (foot ? foot + ' · ' : '') + _('+%d alive standby').format(node.more);
 	if (down && !node.last_ok)
@@ -708,7 +710,7 @@ function renderLive(view, data) {
 			metric(_('Daemon'), data.daemon ? _('Online') : _('Offline'), data.daemon ? 'ok' : 'error'),
 			metric(_('Connections'), String(data.connections || 0)),
 			metric(_('Memory'), formatBytes((data.memory_kb || 0) * 1024)),
-			metric(_('Final mode'), data.strategy === 'fallback' ? _('first alive') : (data.strategy === 'urltest' ? _('fastest') : '-'))
+			metric(_('Final mode'), data.strategy ? theme.modeName(data.strategy) : '-')
 		])
 	]);
 }

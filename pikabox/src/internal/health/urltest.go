@@ -42,6 +42,10 @@ type ProbeOptions struct {
 	// tests: BulkSelect sees the delay results and returns the tags to check.
 	BulkURL    string
 	BulkSelect func(map[string]EndpointResult) []string
+	// SpeedURL, with SpeedSelect, adds a timed download after the bulk checks,
+	// one outbound at a time so the tests do not share the uplink.
+	SpeedURL    string
+	SpeedSelect func(map[string]EndpointResult) []string
 }
 
 // ProbeNodes delay-tests every node through its real outbound and returns a
@@ -86,7 +90,7 @@ func ProbeOutbounds(ctx context.Context, opts ProbeOptions, outbounds map[string
 		return markAll(results, outbounds, "error", fmt.Sprintf("generate probe secret: %v", err))
 	}
 	api := render.ProbeAPI{Listen: fmt.Sprintf("127.0.0.1:%d", port), Secret: secret}
-	if opts.BulkURL != "" && opts.BulkSelect != nil {
+	if (opts.BulkURL != "" && opts.BulkSelect != nil) || (opts.SpeedURL != "" && opts.SpeedSelect != nil) {
 		if api.BulkPort, err = freeLocalPort(); err != nil {
 			return markAll(results, outbounds, "error", fmt.Sprintf("allocate bulk port: %v", err))
 		}
@@ -171,7 +175,7 @@ func ProbeOutbounds(ctx context.Context, opts ProbeOptions, outbounds map[string
 	}
 	wg.Wait()
 
-	if api.BulkPort > 0 {
+	if api.BulkPort > 0 && opts.BulkURL != "" && opts.BulkSelect != nil {
 		tags := opts.BulkSelect(results)
 		bulkSem := make(chan struct{}, bulkConcurrency)
 		for _, tag := range tags {
@@ -192,6 +196,17 @@ func ProbeOutbounds(ctx context.Context, opts ProbeOptions, outbounds map[string
 			}(tag)
 		}
 		wg.Wait()
+	}
+	if api.BulkPort > 0 && opts.SpeedURL != "" && opts.SpeedSelect != nil {
+		for _, tag := range opts.SpeedSelect(results) {
+			if _, present := outbounds[tag]; !present || runCtx.Err() != nil {
+				continue
+			}
+			speed := speedCheck(runCtx, api.BulkPort, tag, opts.SpeedURL)
+			result := results[tag]
+			result.Speed = &speed
+			results[tag] = result
+		}
 	}
 	return results
 }

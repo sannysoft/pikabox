@@ -345,22 +345,23 @@ type subscriptionView struct {
 }
 
 type candidateView struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Type      string `json:"type"`
-	Server    string `json:"server"`
-	Port      any    `json:"port"`
-	Matched   bool   `json:"matched"`
-	Selected  bool   `json:"selected"`
-	Health    string `json:"health,omitempty"`
-	LatencyMS int    `json:"latency_ms,omitempty"`
-	Error     string `json:"error,omitempty"`
-	Bulk      string `json:"bulk,omitempty"`
-	BulkKBps  int    `json:"bulk_kbps,omitempty"`
-	BulkError string `json:"bulk_error,omitempty"`
+	ID        string  `json:"id"`
+	Name      string  `json:"name"`
+	Type      string  `json:"type"`
+	Server    string  `json:"server"`
+	Port      any     `json:"port"`
+	Matched   bool    `json:"matched"`
+	Selected  bool    `json:"selected"`
+	Health    string  `json:"health,omitempty"`
+	LatencyMS int     `json:"latency_ms,omitempty"`
+	Error     string  `json:"error,omitempty"`
+	Bulk      string  `json:"bulk,omitempty"`
+	BulkKBps  int     `json:"bulk_kbps,omitempty"`
+	BulkError string  `json:"bulk_error,omitempty"`
+	SpeedMbps float64 `json:"speed_mbps,omitempty"`
 }
 
-func candidateViews(state managerconfig.SubscriptionState, results map[string]managerconfig.ProbeResult) []candidateView {
+func candidateViews(state managerconfig.SubscriptionState, results map[string]managerconfig.ProbeResult, ttl time.Duration) []candidateView {
 	matched := map[string]bool{}
 	for _, id := range state.Matched {
 		matched[id] = true
@@ -379,6 +380,9 @@ func candidateViews(state managerconfig.SubscriptionState, results map[string]ma
 			if result.BulkFresh() {
 				view.Bulk, view.BulkKBps, view.BulkError = result.Bulk, result.BulkKBps, result.BulkError
 			}
+			if result.SpeedFresh(ttl) {
+				view.SpeedMbps = result.SpeedMbps
+			}
 		}
 		views = append(views, view)
 	}
@@ -395,7 +399,7 @@ func listSubscriptions(configPath string, _ json.RawMessage) map[string]any {
 	for _, id := range sortedIDs(cfg.Subscriptions) {
 		state := managerconfig.LoadSubscriptionState(id)
 		view := subscriptionView{Subscription: cfg.Subscriptions[id], FetchedAt: state.FetchedAt, Total: len(state.Candidates), Skipped: state.Skipped, Matched: len(state.Matched), Selected: []candidateView{}}
-		for _, candidate := range candidateViews(state, results) {
+		for _, candidate := range candidateViews(state, results, speedTTL(cfg)) {
 			if candidate.Health == "ok" {
 				view.Alive++
 				if view.BestMS == 0 || candidate.LatencyMS < view.BestMS {
@@ -481,8 +485,12 @@ func subscriptionOutbounds(configPath string, raw json.RawMessage) map[string]an
 	if err != nil {
 		return fail(err)
 	}
+	ttl := 3 * time.Hour
+	if cfg, err := load(configPath); err == nil {
+		ttl = speedTTL(cfg)
+	}
 	state := managerconfig.LoadSubscriptionState(params.ID)
-	return ok("outbounds", candidateViews(state, managerconfig.LoadProbeResults()))
+	return ok("outbounds", candidateViews(state, managerconfig.LoadProbeResults(), ttl))
 }
 
 // filterPreview evaluates a filter against a subscription's stored candidates
@@ -514,11 +522,12 @@ func filterPreview(configPath string, raw json.RawMessage) map[string]any {
 // ---- outbound groups ----
 
 type memberView struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Kind      string `json:"kind"`
-	Available bool   `json:"available"`
-	LatencyMS int    `json:"latency_ms,omitempty"`
+	ID        string  `json:"id"`
+	Name      string  `json:"name"`
+	Kind      string  `json:"kind"`
+	Available bool    `json:"available"`
+	LatencyMS int     `json:"latency_ms,omitempty"`
+	SpeedMbps float64 `json:"speed_mbps,omitempty"`
 }
 
 type groupView struct {
@@ -583,7 +592,8 @@ func listOutboundGroups(configPath string, _ json.RawMessage) map[string]any {
 			view.LatencyMS = latency(view.Now) // selectors keep no delay history of their own
 		}
 		for _, member := range group.Members {
-			view.MemberInfo = append(view.MemberInfo, memberView{ID: member, Name: targetName(cfg, member), Kind: cfg.Kind(member), Available: plan.Rendered[member], LatencyMS: latency(member)})
+			view.MemberInfo = append(view.MemberInfo, memberView{ID: member, Name: targetName(cfg, member), Kind: cfg.Kind(member), Available: plan.Rendered[member], LatencyMS: latency(member),
+				SpeedMbps: memberSpeed(plan, results, speedTTL(cfg), member)})
 		}
 		views = append(views, view)
 	}

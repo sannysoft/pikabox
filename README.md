@@ -28,11 +28,13 @@ live in UCI (`/etc/config/pikabox`) and are exposed over `ubus call pikabox …`
 - **Subscriptions** — URL + an [expr](https://expr-lang.org) filter over each outbound
   (`type == "vless" && name matches "(?i)nl|de" && port == 443`, or anything in the full
   JSON via `outbound.tls?.reality?.enabled`) + a count: the N fastest alive survivors are
-  used. Shows fetched / filtered / alive counts and best latency; re-tested every probe
+  used, by latency or (`select_by speed`) by measured download speed. Shows fetched / filtered / alive counts and best latency; re-tested every probe
   interval, re-fetched on its own interval.
 - **Outbound groups** — named, ordered member lists (outbounds, subscriptions, other
-  groups, direct/block). Mode *fastest* (sing-box `urltest`) or *fallback* (first alive in
-  written order — a selector driven by the daemon through the Clash API every 30 s). A
+  groups, direct/block). Mode *fastest by latency* (sing-box `urltest`), *fastest by speed*
+  (highest measured Mb/s from a ~4 s, ≤10 MB download, redone every 3 h; switches only when
+  another member is 25% faster) or *fallback* (first alive in written order). Speed and
+  fallback groups are selectors driven by the daemon through the Clash API every 30 s. A
   fallback group also moves off a server that answers latency tests but fails too many real
   connections (over 5% in 5 min by default, counted from sing-box's log; failures beyond
   the server are ignored), then retries it after a cooldown that doubles on repeats.

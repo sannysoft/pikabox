@@ -162,9 +162,12 @@ func probeAll(configPath string, subs []string, withOutbounds bool) map[string]m
 	}
 
 	stored := managerconfig.LoadProbeResults()
-	opts := health.ProbeOptions{Binary: cfg.Manager.SingBoxBinary, TestURL: cfg.Manager.TestURL, BulkURL: bulkURL(cfg)}
+	opts := health.ProbeOptions{Binary: cfg.Manager.SingBoxBinary, TestURL: cfg.Manager.TestURL, BulkURL: bulkURL(cfg), SpeedURL: speedURL(cfg)}
 	opts.BulkSelect = func(delay map[string]health.EndpointResult) []string {
 		return bulkCandidates(cfg, states, delay, stored, withOutbounds)
+	}
+	opts.SpeedSelect = func(delay map[string]health.EndpointResult) []string {
+		return speedCandidates(cfg, states, delay, stored)
 	}
 	results := health.ProbeOutbounds(context.Background(), opts, targets)
 
@@ -194,7 +197,8 @@ func probeAll(configPath string, subs []string, withOutbounds bool) map[string]m
 
 	changed := false
 	for id, state := range states {
-		selected := selectFastest(state.MatchedCandidates(), stored, cfg.Subscriptions[id].Count)
+		sub := cfg.Subscriptions[id]
+		selected := selectFastest(state.MatchedCandidates(), stored, sub.Count, sub.SelectBy == "speed", speedTTL(cfg))
 		if sameSet(selected, state.Selected) {
 			continue
 		}
@@ -239,7 +243,11 @@ func bulkURL(cfg *managerconfig.Config) string {
 // previous bulk verdict unless a bulk check ran this time.
 func mergeProbe(prev managerconfig.ProbeResult, r health.EndpointResult, now string) managerconfig.ProbeResult {
 	next := managerconfig.ProbeResult{Health: r.Health, LatencyMS: r.LatencyMS, Error: r.Error, CheckedAt: now,
-		Bulk: prev.Bulk, BulkKBps: prev.BulkKBps, BulkError: prev.BulkError, BulkCheckedAt: prev.BulkCheckedAt}
+		Bulk: prev.Bulk, BulkKBps: prev.BulkKBps, BulkError: prev.BulkError, BulkCheckedAt: prev.BulkCheckedAt,
+		SpeedMbps: prev.SpeedMbps, SpeedError: prev.SpeedError, SpeedCheckedAt: prev.SpeedCheckedAt}
+	if r.Speed != nil {
+		next.SpeedMbps, next.SpeedError, next.SpeedCheckedAt = r.Speed.Mbps, r.Speed.Error, now
+	}
 	if r.Bulk != nil {
 		next.Bulk, next.BulkKBps, next.BulkError, next.BulkCheckedAt = "ok", r.Bulk.KBps, "", now
 		if !r.Bulk.OK {
@@ -296,17 +304,28 @@ func bulkCandidates(cfg *managerconfig.Config, states map[string]managerconfig.S
 }
 
 // selectFastest returns up to count alive candidate IDs, fastest first
-// (count 0 = every alive candidate).
+// (count 0 = every alive candidate): by latency, or with bySpeed by measured
+// Mb/s, untested candidates after tested ones in latency order.
 // rdx: no hysteresis beyond set equality; add a latency margin if selections flap.
-func selectFastest(candidates []managerconfig.Candidate, results map[string]managerconfig.ProbeResult, count int) []string {
+func selectFastest(candidates []managerconfig.Candidate, results map[string]managerconfig.ProbeResult, count int, bySpeed bool, ttl time.Duration) []string {
 	var alive []managerconfig.Candidate
 	for _, candidate := range candidates {
 		if r := results[candidate.ID]; r.Health == "ok" && !r.Stalled() {
 			alive = append(alive, candidate)
 		}
 	}
+	speed := func(id string) float64 {
+		if r := results[id]; bySpeed && r.SpeedFresh(ttl) {
+			return r.SpeedMbps
+		}
+		return 0
+	}
 	sort.SliceStable(alive, func(i, j int) bool {
-		return results[alive[i].ID].LatencyMS < results[alive[j].ID].LatencyMS
+		a, b := alive[i].ID, alive[j].ID
+		if sa, sb := speed(a), speed(b); sa != sb {
+			return sa > sb
+		}
+		return results[a].LatencyMS < results[b].LatencyMS
 	})
 	if count > 0 && len(alive) > count {
 		alive = alive[:count]
@@ -453,15 +472,16 @@ func (p clashProxy) lastDelay() int {
 }
 
 // enforceFallback points every fallback group at its first alive member, in
-// written order. sing-box has no ordered-fallback outbound, so groups render as
-// selectors and this controller drives them through the Clash API.
+// written order, and every speed group at its fastest alive member by Mb/s.
+// sing-box has neither, so these groups render as selectors and this
+// controller drives them through the Clash API.
 func enforceFallback(cfg managerconfig.Config) {
 	api := newClashAPI(cfg)
 	if api == nil || managedRuntimePID(runtime.DefaultPaths) == 0 {
 		return
 	}
 	plan := render.BuildPlan(cfg)
-	if len(plan.Fallback) == 0 {
+	if len(plan.Fallback) == 0 && len(plan.Speed) == 0 {
 		return
 	}
 	proxies, err := api.proxies()
@@ -471,7 +491,15 @@ func enforceFallback(cfg managerconfig.Config) {
 	probes := managerconfig.LoadProbeResults()
 	testURL := firstNonEmptyString(cfg.Manager.TestURL, health.DefaultTestURL)
 	now := time.Now()
+	ttl := speedTTL(&cfg)
+	groups := map[string][]string{}
 	for group, members := range plan.Fallback {
+		groups[group] = members
+	}
+	for group, members := range plan.Speed {
+		groups[group] = members
+	}
+	for group, members := range groups {
 		active := proxies[group].Now
 		reason := failoverCheck(cfg, plan, active, now)
 		alive := func(member string) bool {
@@ -487,7 +515,14 @@ func enforceFallback(cfg managerconfig.Config) {
 			_, set := coolingDown(member, now)
 			return set
 		}
-		target := pickFallback(members, alive, cooling)
+		var target string
+		if _, bySpeed := plan.Speed[group]; bySpeed {
+			target = pickBySpeed(members, active, alive, cooling,
+				func(m string) float64 { return memberSpeed(plan, probes, ttl, m) },
+				func(m string) int { return memberLatency(plan, probes, m) })
+		} else {
+			target = pickFallback(members, alive, cooling)
+		}
 		if active == target {
 			if reason != "" {
 				recordEvent("error", "%s: %s %s, but no other member is available", cfg.OutboundGroups[group].Name, displayName(&cfg, active), reason)

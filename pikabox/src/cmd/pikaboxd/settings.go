@@ -39,6 +39,8 @@ func settingsRPC(configPath string, _ json.RawMessage) map[string]any {
 			"failover_window":       m.FailoverWindow,
 			"failover_min_attempts": m.FailoverMinAttempts,
 			"failover_cooldown":     m.FailoverCooldown,
+			"speed_test_url":        m.SpeedTestURL,
+			"speed_interval":        m.SpeedInterval,
 			"mixed_listen":          m.MixedListen,
 			"mixed_port":            m.MixedPort,
 			"tproxy_port":           m.TProxyPort,
@@ -90,6 +92,8 @@ type settingsPayload struct {
 	FailoverWindow      *string `json:"failover_window"`
 	FailoverMinAttempts *string `json:"failover_min_attempts"`
 	FailoverCooldown    *string `json:"failover_cooldown"`
+	SpeedTestURL        *string `json:"speed_test_url"`
+	SpeedInterval       *string `json:"speed_interval"`
 	DNSFinal            *string `json:"dns_final"`
 	MixedListen         *string `json:"mixed_listen"`
 	MixedPort           *string `json:"mixed_port"`
@@ -127,6 +131,7 @@ func (p *settingsPayload) UnmarshalJSON(data []byte) error {
 		SingBoxBinary: str("sing_box_bin"),
 		FailoverRate:  str("failover_rate"), FailoverWindow: str("failover_window"),
 		FailoverMinAttempts: str("failover_min_attempts"), FailoverCooldown: str("failover_cooldown"),
+		SpeedTestURL: str("speed_test_url"), SpeedInterval: str("speed_interval"),
 	}
 	return nil
 }
@@ -144,6 +149,9 @@ func setSettings(configPath string, raw json.RawMessage) map[string]any {
 	if v := settings.TestURL; v != nil && *v != "" && !strings.HasPrefix(*v, "http://") && !strings.HasPrefix(*v, "https://") {
 		return fail(fmt.Errorf("test URL must start with http:// or https://"))
 	}
+	if v := settings.SpeedTestURL; v != nil && *v != "" && *v != "off" && !strings.HasPrefix(*v, "http://") && !strings.HasPrefix(*v, "https://") {
+		return fail(fmt.Errorf("speed test URL must start with http:// or https:// (or be off)"))
+	}
 	if v := settings.BulkTestURL; v != nil && *v != "" && *v != "off" && !strings.HasPrefix(*v, "http://") && !strings.HasPrefix(*v, "https://") {
 		return fail(fmt.Errorf("bulk test URL must start with http:// or https:// (or be off)"))
 	}
@@ -154,6 +162,7 @@ func setSettings(configPath string, raw json.RawMessage) map[string]any {
 		"sing_box_bin":  settings.SingBoxBinary,
 		"failover_rate": settings.FailoverRate, "failover_window": settings.FailoverWindow,
 		"failover_min_attempts": settings.FailoverMinAttempts, "failover_cooldown": settings.FailoverCooldown,
+		"speed_test_url": settings.SpeedTestURL, "speed_interval": settings.SpeedInterval,
 	} {
 		if value == nil {
 			continue

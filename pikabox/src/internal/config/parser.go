@@ -269,6 +269,7 @@ func applyManager(cfg *Config, sec section) error {
 		"mixed_listen": true, "mixed_port": true, "tproxy_port": true, "dns_port": true,
 		"update_interval": true, "final": true, "dns_final": true, "probe_interval": true, "test_url": true, "bulk_test_url": true,
 		"failover_rate": true, "failover_window": true, "failover_min_attempts": true, "failover_cooldown": true,
+		"speed_test_url": true, "speed_interval": true,
 	}
 	if err := rejectUnknownOptions(sec, allowed); err != nil {
 		return err
@@ -327,6 +328,14 @@ func applyManager(cfg *Config, sec section) error {
 			} else {
 				cfg.Manager.FailoverCooldown = value
 			}
+		case "speed_test_url":
+			cfg.Manager.SpeedTestURL = value
+		case "speed_interval":
+			if d, perr := time.ParseDuration(value); perr != nil || d < 30*time.Minute {
+				err = fmt.Errorf("line %d: option %s must be a duration of at least 30m (e.g. 3h), got %q", sec.line, key, value)
+			} else {
+				cfg.Manager.SpeedInterval = value
+			}
 		case "failover_min_attempts":
 			cfg.Manager.FailoverMinAttempts, err = strconv.Atoi(value)
 			if err != nil || cfg.Manager.FailoverMinAttempts < 1 {
@@ -376,7 +385,7 @@ func readSubscription(sec section) (Subscription, error) {
 	enabled, name, err := readNamed(sec, map[string]bool{
 		"url": true, "format": true, "filter": true, "count": true,
 		"update_interval": true, "last_update": true, "last_error": true,
-		"user_agent": true, "hwid": true,
+		"user_agent": true, "hwid": true, "select_by": true,
 	}, nil)
 	if err != nil {
 		return Subscription{}, err
@@ -393,6 +402,7 @@ func readSubscription(sec section) (Subscription, error) {
 		LastError:      sec.options["last_error"],
 	}
 	subscription.UserAgent = sec.options["user_agent"]
+	subscription.SelectBy = valueOrDefault(sec.options["select_by"], "latency")
 	if value, ok := sec.options["hwid"]; ok {
 		if subscription.HWID, err = parseBool(sec, "hwid", value); err != nil {
 			return Subscription{}, err

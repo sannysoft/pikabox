@@ -43,6 +43,10 @@ function showModal(view, row) {
 			previewBox
 		]) : '',
 		E('label', {}, [ _('Use the N fastest alive (0 = all alive)'), E('input', { 'class': 'cbi-input-text', 'name': 'count', 'type': 'number', 'min': '0', 'value': String(row.count || 0) }) ]),
+		E('label', {}, [ _('Fastest by'), theme.select('select_by', [
+			{ id: 'latency', name: _('Latency (ms)') },
+			{ id: 'speed', name: _('Download speed (Mb/s) — tests every alive server, up to 10 MB each per speed interval') }
+		], row.select_by || 'latency') ]),
 		E('label', {}, [ _('Refetch interval'), E('input', { 'class': 'cbi-input-text', 'name': 'update_interval', 'value': row.update_interval || '24h' }) ])
 	], function(root) {
 		return callSet({
@@ -55,6 +59,7 @@ function showModal(view, row) {
 			hwid: theme.value(root, 'hwid'),
 			filter: theme.value(root, 'filter'),
 			count: parseInt(theme.value(root, 'count'), 10) || 0,
+			select_by: theme.value(root, 'select_by'),
 			update_interval: theme.value(root, 'update_interval')
 		});
 	}, _('Subscription saved'));
@@ -65,6 +70,8 @@ function showOutbounds(view, sub) {
 		var rows = (result.outbounds || []).slice().sort(function(a, b) {
 			if (a.matched !== b.matched)
 				return a.matched ? -1 : 1;
+			if (sub.select_by === 'speed' && (a.speed_mbps || 0) !== (b.speed_mbps || 0))
+				return (b.speed_mbps || 0) - (a.speed_mbps || 0);
 			var la = a.health === 'ok' ? a.latency_ms : 1e9, lb = b.health === 'ok' ? b.latency_ms : 1e9;
 			return la - lb;
 		});
@@ -72,7 +79,7 @@ function showOutbounds(view, sub) {
 			E('div', { 'style': 'max-height:65vh;overflow:auto' }, E('table', { 'class': 'pikabox-table' }, [
 				E('thead', {}, E('tr', {}, [
 					E('th', {}, _('Name')), E('th', {}, _('Type')), E('th', {}, _('Server')),
-					E('th', {}, _('Filter')), E('th', {}, _('Latency')), E('th', {}, _('Bulk')), E('th', {}, _('In use'))
+					E('th', {}, _('Filter')), E('th', {}, _('Latency')), E('th', {}, _('Bulk')), E('th', {}, _('Speed')), E('th', {}, _('In use'))
 				])),
 				E('tbody', {}, rows.length ? rows.map(function(c) {
 					return E('tr', { 'class': c.selected ? 'pikabox-current' : '' }, [
@@ -82,9 +89,10 @@ function showOutbounds(view, sub) {
 						E('td', {}, c.matched ? _('pass') : _('filtered out')),
 						E('td', {}, c.matched ? theme.latency(c.latency_ms, c.health, c.error) : '-'),
 						E('td', {}, c.matched ? theme.bulk(c.bulk, c.bulk_kbps, c.bulk_error) : '-'),
+						E('td', {}, c.matched ? theme.speed(c.speed_mbps) : '-'),
 						E('td', {}, c.selected ? _('Yes') : '')
 					]);
-				}) : E('tr', {}, E('td', { 'colspan': 7 }, _('Nothing fetched yet'))))
+				}) : E('tr', {}, E('td', { 'colspan': 8 }, _('Nothing fetched yet'))))
 			])),
 			E('div', { 'class': 'right' }, E('button', { 'class': 'btn cbi-button', 'click': ui.hideModal }, _('Close')))
 		]);
@@ -106,7 +114,7 @@ function renderTable(view, subs) {
 				E('td', {}, [
 					E('div', {}, [ E('strong', {}, theme.text(sub.name)), sub.enabled ? '' : E('span', { 'class': 'pikabox-badge off', 'style': 'margin-left:6px' }, _('disabled')) ]),
 					E('div', { 'class': 'pikabox-hint pikabox-mono', 'title': sub.filter || '' }, theme.text(sub.filter ? sub.filter.slice(0, 60) : _('no filter'))),
-					E('div', { 'class': 'pikabox-hint' }, theme.text(sub.count ? _('top %d').format(sub.count) : _('all alive')))
+					E('div', { 'class': 'pikabox-hint' }, theme.text((sub.count ? _('top %d').format(sub.count) : _('all alive')) + (sub.select_by === 'speed' ? ' · ' + _('by speed') : '')))
 				]),
 				E('td', {}, [
 					E('div', {}, [ '%d / %d / %d'.format(sub.total || 0, sub.matched || 0, sub.alive || 0) ]),

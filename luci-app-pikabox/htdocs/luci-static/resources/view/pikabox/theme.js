@@ -473,6 +473,21 @@ return baseclass.extend({
 		return E('span', { 'class': 'pikabox-ms none', 'title': _('Not bulk-checked yet') }, [ '—' ]);
 	},
 
+	// speed renders a measured download speed ("43 Mb/s"), the failure, or a dash.
+	speed: function(mbps, error, checkedAt) {
+		if (mbps)
+			return E('span', { 'class': 'pikabox-ms ' + (mbps >= 20 ? 'fast' : (mbps >= 5 ? 'mid' : 'slow')), 'title': checkedAt ? _('Measured %s').format(this.ago(checkedAt)) : '' }, [
+				(mbps >= 10 ? Math.round(mbps) : mbps.toFixed(1)) + ' Mb/s' ]);
+		if (error)
+			return E('span', { 'class': 'pikabox-ms down', 'title': error }, [ _('failed') ]);
+		return E('span', { 'class': 'pikabox-ms none', 'title': _('Speed is measured only for what is chosen by speed') }, [ '—' ]);
+	},
+
+	// modeName labels an outbound group mode.
+	modeName: function(mode) {
+		return mode === 'fallback' ? _('first alive') : (mode === 'speed' ? _('fastest by speed') : _('fastest by latency'));
+	},
+
 	// ago formats an ISO time as "12s ago" / "5m ago" / "3h ago" / "2d ago".
 	ago: function(iso) {
 		if (!iso)

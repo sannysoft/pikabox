@@ -23,6 +23,11 @@ config manager 'main'
 	option failover_window '5m'
 	option failover_min_attempts '30'
 	option failover_cooldown '10m'
+	# Download speed test for outbounds chosen by speed (outbound groups with
+	# mode 'speed', subscriptions with select_by 'speed'): about 4 s, at most
+	# 10 MB, redone after speed_interval. 'off' disables it.
+	option speed_test_url 'https://speed.cloudflare.com/__down?bytes=10000000'
+	option speed_interval '3h'
 
 # Outbounds: one proxy each; source is a share URI or a sing-box outbound JSON.
 # config outbound 'nl_vp1'
@@ -38,7 +43,9 @@ config manager 'main'
 # 	option count '3'
 
 # Outbound groups: ordered members (outbounds, subscriptions, other groups,
-# direct/block). mode urltest = fastest; fallback = first alive in order.
+# direct/block). mode urltest = lowest latency; speed = highest measured Mb/s
+# (switches only when another member is 25% faster); fallback = first alive in
+# order.
 # config outbound_group 'us_out'
 # 	option name 'us-out'
 # 	option mode 'fallback'

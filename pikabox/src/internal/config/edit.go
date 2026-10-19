@@ -59,6 +59,9 @@ func UpsertSubscription(path string, subscription Subscription) error {
 	}
 	setOrDelete(options, "filter", strings.TrimSpace(subscription.Filter))
 	setOrDelete(options, "user_agent", strings.TrimSpace(subscription.UserAgent))
+	if subscription.SelectBy == "speed" {
+		options["select_by"] = "speed"
+	}
 	if subscription.HWID {
 		options["hwid"] = "1"
 	}

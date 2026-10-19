@@ -569,11 +569,12 @@ func closeConnectionRPC(configPath string, raw json.RawMessage) map[string]any {
 
 // chainInfo describes each hop of the live exit path for the status view.
 type chainHop struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Kind      string `json:"kind"`
-	Detail    string `json:"detail,omitempty"`
-	LatencyMS int    `json:"latency_ms,omitempty"`
+	ID        string  `json:"id"`
+	Name      string  `json:"name"`
+	Kind      string  `json:"kind"`
+	Detail    string  `json:"detail,omitempty"`
+	LatencyMS int     `json:"latency_ms,omitempty"`
+	SpeedMbps float64 `json:"speed_mbps,omitempty"`
 }
 
 func chainHops(cfg *managerconfig.Config, tags []string, proxies map[string]clashProxy) []chainHop {
@@ -593,6 +594,9 @@ func chainHops(cfg *managerconfig.Config, tags []string, proxies map[string]clas
 			hop.LatencyMS = delay
 		} else if result, probed := results[tag]; probed && result.Health == "ok" {
 			hop.LatencyMS = result.LatencyMS
+		}
+		if result, probed := results[tag]; probed && result.SpeedFresh(speedTTL(cfg)) {
+			hop.SpeedMbps = result.SpeedMbps
 		}
 		hops = append(hops, hop)
 	}

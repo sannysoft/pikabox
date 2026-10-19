@@ -83,6 +83,16 @@ type ProbeResult struct {
 	BulkKBps      int    `json:"bulk_kbps,omitempty"`
 	BulkError     string `json:"bulk_error,omitempty"`
 	BulkCheckedAt string `json:"bulk_checked_at,omitempty"`
+	// Speed is the latest speed test: Mb/s over a few seconds of download.
+	SpeedMbps      float64 `json:"speed_mbps,omitempty"`
+	SpeedError     string  `json:"speed_error,omitempty"`
+	SpeedCheckedAt string  `json:"speed_checked_at,omitempty"`
+}
+
+// SpeedFresh reports whether r carries a speed test younger than ttl.
+func (r ProbeResult) SpeedFresh(ttl time.Duration) bool {
+	at, err := time.Parse(time.RFC3339, r.SpeedCheckedAt)
+	return err == nil && time.Since(at) < ttl
 }
 
 // BulkTTL is how long a bulk check result is trusted before it is redone.
