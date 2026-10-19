@@ -473,11 +473,16 @@ return baseclass.extend({
 		return E('span', { 'class': 'pikabox-ms none', 'title': _('Not bulk-checked yet') }, [ '—' ]);
 	},
 
+	// mbps formats a speed as "43 Mb/s" ("" when unknown).
+	mbps: function(v) {
+		return v ? (v >= 10 ? Math.round(v) : v.toFixed(1)) + ' Mb/s' : '';
+	},
+
 	// speed renders a measured download speed ("43 Mb/s"), the failure, or a dash.
 	speed: function(mbps, error, checkedAt) {
 		if (mbps)
 			return E('span', { 'class': 'pikabox-ms ' + (mbps >= 20 ? 'fast' : (mbps >= 5 ? 'mid' : 'slow')), 'title': checkedAt ? _('Measured %s').format(this.ago(checkedAt)) : '' }, [
-				(mbps >= 10 ? Math.round(mbps) : mbps.toFixed(1)) + ' Mb/s' ]);
+				this.mbps(mbps) ]);
 		if (error)
 			return E('span', { 'class': 'pikabox-ms down', 'title': error }, [ _('failed') ]);
 		return E('span', { 'class': 'pikabox-ms none', 'title': _('Speed is measured only for what is chosen by speed') }, [ '—' ]);

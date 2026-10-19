@@ -115,6 +115,7 @@ type healthItem struct {
 	Kind      string         `json:"kind"`
 	Health    string         `json:"health"` // ok | down | error | idle | unknown
 	LatencyMS int            `json:"latency_ms,omitempty"`
+	SpeedMbps float64        `json:"speed_mbps,omitempty"`
 	Error     string         `json:"error,omitempty"`
 	LastOK    string         `json:"last_ok,omitempty"`
 	History   []historyPoint `json:"history"`
@@ -143,6 +144,13 @@ func healthRPC(configPath string, _ json.RawMessage) map[string]any {
 		proxies, _ = api.proxies()
 	}
 
+	ttl := speedTTL(cfg)
+	speedOf := func(tag string) float64 {
+		if r := results[tag]; r.Health == "ok" && r.SpeedFresh(ttl) {
+			return r.SpeedMbps
+		}
+		return 0
+	}
 	items := []healthItem{}
 	for _, id := range sortedIDs(cfg.OutboundGroups) {
 		group := cfg.OutboundGroups[id]
@@ -151,6 +159,7 @@ func healthRPC(configPath string, _ json.RawMessage) map[string]any {
 			item.Health, item.Error = "error", "no available members"
 		} else if now := proxies[id].Now; now != "" {
 			item.Now = displayName(cfg, now)
+			item.SpeedMbps = memberSpeed(plan, results, ttl, now)
 			if delay := proxies[now].lastDelay(); delay > 0 {
 				item.Health, item.LatencyMS = "ok", delay
 			} else if result, probed := results[now]; probed {
@@ -175,6 +184,9 @@ func healthRPC(configPath string, _ json.RawMessage) map[string]any {
 				}
 			}
 		}
+		for _, tag := range state.Selected {
+			item.SpeedMbps = max(item.SpeedMbps, speedOf(tag))
+		}
 		item.Detail = fmt.Sprintf("%d of %d alive · %d in use", alive, len(state.Matched), len(state.Selected))
 		switch {
 		case !sub.Enabled:
@@ -198,6 +210,7 @@ func healthRPC(configPath string, _ json.RawMessage) map[string]any {
 			item.Health, item.Error = "error", "invalid source"
 		} else if result, probed := results[id]; probed {
 			item.Health, item.LatencyMS, item.Error = result.Health, result.LatencyMS, result.Error
+			item.SpeedMbps = speedOf(id)
 			if result.Stalled() {
 				item.Stalled = result.BulkError
 			}
@@ -324,6 +337,9 @@ func healthGraph(cfg *managerconfig.Config, plan render.Plan, items []healthItem
 			selected[tag] = true
 			result := results[tag]
 			node := healthItem{ID: tag, Name: names[tag], Kind: "server", Health: firstNonEmptyString(result.Health, "unknown"), LatencyMS: result.LatencyMS, Error: result.Error}
+			if result.SpeedFresh(speedTTL(cfg)) {
+				node.SpeedMbps = result.SpeedMbps
+			}
 			if result.Stalled() {
 				node.Stalled = result.BulkError
 			}

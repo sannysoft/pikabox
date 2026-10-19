@@ -234,7 +234,9 @@ function renderHero(view, data) {
 		return E('option', { 'value': opt, 'selected': opt === data.runtime_mode ? 'selected' : null }, opt);
 	}));
 
-	var health = valueOrDash(data.health) + (data.latency_ms ? ' · ' + data.latency_ms + ' ms' : '');
+	var hops = data.hops || [];
+	var exitSpeed = hops.length ? hops[hops.length - 1].speed_mbps : 0;
+	var health = valueOrDash(data.health) + (data.latency_ms ? ' · ' + data.latency_ms + ' ms' : '') + (exitSpeed ? ' · ' + theme.mbps(exitSpeed) : '');
 
 	return E('div', { 'class': 'pikabox-hero' }, [
 		E('div', { 'class': 'pikabox-hero-status' }, [
@@ -362,7 +364,7 @@ function renderPath(data) {
 			if (hop.latency_ms)
 				meta.push(hop.latency_ms + ' ms');
 			if (hop.speed_mbps)
-				meta.push((hop.speed_mbps >= 10 ? Math.round(hop.speed_mbps) : hop.speed_mbps.toFixed(1)) + ' Mb/s');
+				meta.push(theme.mbps(hop.speed_mbps));
 			wrap.appendChild(E('div', { 'class': 'pkb-hop' + (leaf ? ' pkb-leaf' : '') }, [
 				theme.pill(hop.name, hopKind(hop.kind) === 'direct' || hopKind(hop.kind) === 'block' ? 'builtin' : hopKind(hop.kind)),
 				E('span', { 'class': 'pkb-hop-meta' }, [ meta.join(' · ') || (leaf ? _('exit') : '') ])
@@ -420,7 +422,7 @@ function graphNode(node, live) {
 	else if (node.stalled)
 		ms = E('span', { 'class': 'pkb-node-ms down', 'title': _('Answers latency tests but freezes on real traffic') }, [ _('stalls') ]);
 	else if (node.health === 'ok' && node.latency_ms)
-		ms = E('span', { 'class': 'pkb-node-ms' }, [ node.latency_ms + ' ms' ]);
+		ms = E('span', { 'class': 'pkb-node-ms' }, [ node.latency_ms + ' ms' + (node.speed_mbps ? ' · ' + theme.mbps(node.speed_mbps) : '') ]);
 	else if (node.health === 'idle')
 		ms = E('span', { 'class': 'pkb-node-ms idle' }, [ _('off') ]);
 	else if (node.health === 'unknown')

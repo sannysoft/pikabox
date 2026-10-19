@@ -120,9 +120,12 @@ function renderTable(view, subs) {
 					E('div', {}, [ '%d / %d / %d'.format(sub.total || 0, sub.matched || 0, sub.alive || 0) ]),
 					sub.skipped ? E('div', { 'class': 'pikabox-hint', 'title': sub.skipped }, theme.text(_('skipped: %s').format(sub.skipped.length > 70 ? sub.skipped.slice(0, 70) + '…' : sub.skipped))) : ''
 				]),
-				E('td', {}, theme.latency(sub.best_ms, sub.alive ? 'ok' : (sub.matched ? 'down' : ''))),
+				E('td', {}, [
+					theme.latency(sub.best_ms, sub.alive ? 'ok' : (sub.matched ? 'down' : '')),
+					sub.best_mbps ? E('div', { 'style': 'margin-top:4px' }, theme.speed(sub.best_mbps)) : ''
+				]),
 				E('td', {}, E('div', { 'class': 'pikabox-members' }, (sub.selected || []).length ? sub.selected.map(function(c) {
-					return E('span', { 'class': 'pikabox-member', 'title': c.server + ':' + c.port }, [ c.name + ' · ' + (c.latency_ms ? c.latency_ms + ' ms' : '-') ]);
+					return E('span', { 'class': 'pikabox-member', 'title': c.server + ':' + c.port }, [ c.name + ' · ' + (c.latency_ms ? c.latency_ms + ' ms' : '-') + (c.speed_mbps ? ' · ' + theme.mbps(c.speed_mbps) : '') ]);
 				}) : [ E('span', { 'class': 'pikabox-hint' }, _('none — not used yet')) ])),
 				E('td', {}, [
 					E('div', {}, theme.timeAgo(sub.last_update, _('never'))),

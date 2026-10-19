@@ -40,7 +40,7 @@ function showModal(view, data, row) {
 function renderMembers(group) {
 	return E('div', { 'class': 'pikabox-members' }, (group.member_info || []).length ? group.member_info.map(function(m, i) {
 		var label = (group.mode === 'fallback' ? (i + 1) + '. ' : '') + (m.name || m.id) + (m.latency_ms ? ' · ' + m.latency_ms + ' ms' : '') +
-			(m.speed_mbps ? ' · ' + (m.speed_mbps >= 10 ? Math.round(m.speed_mbps) : m.speed_mbps.toFixed(1)) + ' Mb/s' : '');
+			(m.speed_mbps ? ' · ' + theme.mbps(m.speed_mbps) : '');
 		var chip = theme.pill(label, m.kind, m.available ? (m.id === group.now ? _('In use now') : '') : _('Not available (disabled, broken, or nothing selected)'));
 		if (m.id === group.now)
 			chip.style.boxShadow = '0 0 0 2px #2271b1';

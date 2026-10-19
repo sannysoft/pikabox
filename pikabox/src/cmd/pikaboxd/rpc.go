@@ -341,6 +341,7 @@ type subscriptionView struct {
 	Matched   int             `json:"matched"`
 	Alive     int             `json:"alive"`
 	BestMS    int             `json:"best_ms"`
+	BestMbps  float64         `json:"best_mbps,omitempty"`
 	Selected  []candidateView `json:"selected"`
 }
 
@@ -405,12 +406,20 @@ func listSubscriptions(configPath string, _ json.RawMessage) map[string]any {
 				if view.BestMS == 0 || candidate.LatencyMS < view.BestMS {
 					view.BestMS = candidate.LatencyMS
 				}
+				view.BestMbps = max(view.BestMbps, candidate.SpeedMbps)
 			}
 			if candidate.Selected {
 				view.Selected = append(view.Selected, candidate)
 			}
 		}
-		sort.SliceStable(view.Selected, func(i, j int) bool { return view.Selected[i].LatencyMS < view.Selected[j].LatencyMS })
+		bySpeed := view.SelectBy == "speed"
+		sort.SliceStable(view.Selected, func(i, j int) bool {
+			a, b := view.Selected[i], view.Selected[j]
+			if bySpeed && a.SpeedMbps != b.SpeedMbps {
+				return a.SpeedMbps > b.SpeedMbps
+			}
+			return a.LatencyMS < b.LatencyMS
+		})
 		views = append(views, view)
 	}
 	return ok("subscriptions", views)
