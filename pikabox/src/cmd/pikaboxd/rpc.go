@@ -212,23 +212,16 @@ func collectStatus(configPath string) Status {
 		status.MemoryKB = readRSS(pid)
 		if api := newClashAPI(*cfg); api != nil {
 			if proxies, err := api.proxies(); err == nil {
-				leaf := final
-				for i := 0; i < 8 && proxies[leaf].Now != ""; i++ {
-					status.Chain = append(status.Chain, leaf)
-					leaf = proxies[leaf].Now
-				}
+				chain, leaf := exitLeaf(proxies, final)
+				status.Chain = chain
 				status.SelectedOutbound = leaf
 				for _, tag := range status.Chain {
 					status.ChainNames = append(status.ChainNames, displayName(cfg, tag))
 				}
 				status.SelectedName = displayName(cfg, leaf)
 				status.Hops = chainHops(cfg, append(append([]string{}, status.Chain...), leaf), proxies)
-				if delay := proxies[leaf].lastDelay(); delay > 0 {
-					status.LatencyMS = delay
-					status.Health = "ok"
-				} else if len(proxies[leaf].History) > 0 {
-					status.Health = "down"
-				}
+				status.LatencyMS = proxies[leaf].lastDelay()
+				status.Health = leafHealth(proxies[leaf])
 			}
 		}
 	}

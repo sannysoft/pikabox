@@ -567,6 +567,7 @@ func startFallbackController(configPath string) {
 			time.Sleep(30 * time.Second)
 			if cfg, err := managerconfig.Load(configPath); err == nil && cfg.Manager.Active() {
 				enforceFallback(*cfg)
+				checkStuck(configPath, *cfg, time.Now())
 			}
 		}
 	}()
