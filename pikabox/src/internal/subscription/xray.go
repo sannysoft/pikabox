@@ -34,6 +34,8 @@ type xrayStream struct {
 	WSSettings      xrayHostPath   `json:"wsSettings"`
 	HTTPUpgrade     xrayHostPath   `json:"httpupgradeSettings"`
 	GRPCSettings    xrayGRPC       `json:"grpcSettings"`
+	XHTTPSettings   map[string]any `json:"xhttpSettings"`
+	SplitHTTP       map[string]any `json:"splithttpSettings"`
 	Hysteria        xrayHysteria   `json:"hysteriaSettings"`
 	TCPSettings     map[string]any `json:"tcpSettings"`
 }
@@ -203,6 +205,8 @@ func xrayNode(ob xrayOutbound) (managerconfig.Node, error) {
 		node.Host, node.Path = st.HTTPUpgrade.Host, st.HTTPUpgrade.Path
 	case "grpc":
 		node.Path = st.GRPCSettings.ServiceName
+	case "xhttp":
+		xhttpFromXray(&node, st)
 	case "raw":
 		node.Transport = "tcp"
 	}
@@ -229,4 +233,31 @@ func xrayNode(ob xrayOutbound) (managerconfig.Node, error) {
 		return node, fmt.Errorf("xray %s outbound %q has no address/port", ob.Protocol, ob.Tag)
 	}
 	return node, nil
+}
+
+// xhttpFromXray reads xhttpSettings (or the older splithttpSettings): host,
+// path and mode, plus options given either inside "extra" or beside them.
+func xhttpFromXray(node *managerconfig.Node, st xrayStream) {
+	settings := st.XHTTPSettings
+	if settings == nil {
+		settings = st.SplitHTTP
+	}
+	node.Extra = map[string]any{}
+	for key, value := range settings {
+		switch key {
+		case "host":
+			node.Host, _ = value.(string)
+		case "path":
+			node.Path, _ = value.(string)
+		case "mode":
+			node.Mode, _ = value.(string)
+		case "extra":
+			extra, _ := value.(map[string]any)
+			for k, v := range extra {
+				node.Extra[k] = v
+			}
+		default:
+			node.Extra[key] = value
+		}
+	}
 }

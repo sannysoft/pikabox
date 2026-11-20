@@ -161,9 +161,13 @@ type Node struct {
 	Transport string `json:"transport"`
 	Host      string `json:"host"`
 	Path      string `json:"path"`
-	SNI       string `json:"sni"`
-	ALPN      string `json:"alpn"`
-	Insecure  bool   `json:"insecure"`
+	// XHTTP (Xray "xhttp"/"splithttp"; needs sing-box-extended): Mode is
+	// auto | packet-up | stream-up | stream-one, Extra the Xray "extra" object.
+	Mode     string         `json:"mode,omitempty"`
+	Extra    map[string]any `json:"extra,omitempty"`
+	SNI      string         `json:"sni"`
+	ALPN     string         `json:"alpn"`
+	Insecure bool           `json:"insecure"`
 	// Reality (VLESS Reality) parameters. PublicKey/ShortID come from the share
 	// link's pbk/sid; Fingerprint is the uTLS fingerprint (fp, e.g. "chrome").
 	RealityPublicKey string `json:"reality_public_key"`

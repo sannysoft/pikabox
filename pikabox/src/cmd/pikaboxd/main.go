@@ -26,6 +26,7 @@ import (
 	"github.com/sannysoft/pikabox/internal/health"
 	"github.com/sannysoft/pikabox/internal/render"
 	"github.com/sannysoft/pikabox/internal/runtime"
+	"github.com/sannysoft/pikabox/internal/subscription"
 )
 
 // version is stamped at build time (-X main.version=…); "dev" otherwise.
@@ -198,6 +199,9 @@ func runServe(args []string) {
 		handleRPC(w, r, *configPath)
 	})
 
+	if cfg, err := managerconfig.Load(*configPath); err == nil {
+		subscription.XHTTPSupported = strings.Contains(singBoxVersion(cfg.Manager.SingBoxBinary), "extended")
+	}
 	startProbeScheduler(*configPath)
 	startFallbackController(*configPath)
 	startDialStats(*configPath)

@@ -15,6 +15,14 @@ var callPreview = rpc.declare({ object: 'pikabox', method: 'filter_preview', par
 var FILTER_HELP = _('expr expression; empty keeps everything. Fields: name, type, server, port, outbound (the full sing-box JSON). Examples: %s').format(
 	'type == "vless" && name matches "(?i)nl|netherlands"  ·  port == 443 && !(name contains "test")  ·  outbound.tls?.reality?.enabled == true');
 
+// intervalHours turns a stored Go duration ("24h", "1h30m", "90m") into hours.
+function intervalHours(value) {
+	var hours = 0, units = { h: 1, m: 1 / 60, s: 1 / 3600 }, re = /(\d+(?:\.\d+)?)([hms])/g, m;
+	while ((m = re.exec(value || '')))
+		hours += parseFloat(m[1]) * units[m[2]];
+	return Math.round(hours * 100) / 100 || 24;
+}
+
 function showModal(view, row) {
 	row = row || { enabled: true, format: 'auto', count: 3, update_interval: '24h', filter: '' };
 	var previewBox = E('div', { 'class': 'pikabox-inline-help' });
@@ -47,7 +55,7 @@ function showModal(view, row) {
 			{ id: 'latency', name: _('Latency (ms)') },
 			{ id: 'speed', name: _('Download speed (Mb/s) — tests every alive server, up to 10 MB each per speed interval') }
 		], row.select_by || 'latency') ]),
-		E('label', {}, [ _('Refetch interval'), E('input', { 'class': 'cbi-input-text', 'name': 'update_interval', 'value': row.update_interval || '24h' }) ])
+		E('label', {}, [ _('Refresh the list every (hours)'), E('input', { 'class': 'cbi-input-text', 'name': 'update_interval', 'type': 'number', 'min': '1', 'step': '1', 'value': String(intervalHours(row.update_interval)) }) ])
 	], function(root) {
 		return callSet({
 			id: row.id || '',
@@ -60,7 +68,7 @@ function showModal(view, row) {
 			filter: theme.value(root, 'filter'),
 			count: parseInt(theme.value(root, 'count'), 10) || 0,
 			select_by: theme.value(root, 'select_by'),
-			update_interval: theme.value(root, 'update_interval')
+			update_interval: Math.max(1, Math.round(parseFloat(theme.value(root, 'update_interval')) || 24)) + 'h'
 		});
 	}, _('Subscription saved'));
 }
@@ -129,6 +137,7 @@ function renderTable(view, subs) {
 				}) : [ E('span', { 'class': 'pikabox-hint' }, _('none — not used yet')) ])),
 				E('td', {}, [
 					E('div', {}, theme.timeAgo(sub.last_update, _('never'))),
+					E('div', { 'class': 'pikabox-hint' }, _('every %sh').format(intervalHours(sub.update_interval))),
 					sub.last_error ? E('div', { 'class': 'pikabox-status-error', 'title': sub.last_error }, theme.text(sub.last_error.slice(0, 80))) : ''
 				]),
 				E('td', {}, E('div', { 'class': 'pikabox-actions' }, [

@@ -220,9 +220,9 @@ func TestNodeOutboundTransports(t *testing.T) {
 	if tr := ob["transport"].(map[string]any); tr["type"] != "http" || tr["path"] != "/p" {
 		t.Fatalf("transport = %#v", tr)
 	}
-	_, err = NodeOutbound(managerconfig.Node{ID: "x", Type: "vless", Server: "1.2.3.4", Port: 443, UUID: "u", Transport: "xhttp"})
-	if err == nil || !strings.Contains(err.Error(), "xhttp") {
-		t.Fatalf("err = %v, want xhttp unsupported", err)
+	_, err = NodeOutbound(managerconfig.Node{ID: "x", Type: "vless", Server: "1.2.3.4", Port: 443, UUID: "u", Transport: "kcp"})
+	if err == nil || !strings.Contains(err.Error(), "kcp") {
+		t.Fatalf("err = %v, want kcp unsupported", err)
 	}
 	if _, err := NodeOutbound(managerconfig.Node{ID: "z", Type: "wireguard"}); err == nil {
 		t.Fatal("unknown type must fail")
@@ -300,18 +300,18 @@ func TestDueUsesSubscriptionUpdateInterval(t *testing.T) {
 }
 
 func TestParseOutboundsSkipsUnsupportedEntries(t *testing.T) {
-	payload := "vless://u@a.example:443?type=xhttp&security=reality#x1\n" +
-		"vless://u@b.example:443?type=xhttp&security=reality#x2\n" +
+	payload := "vless://u@a.example:443?type=kcp&security=reality#x1\n" +
+		"vless://u@b.example:443?type=kcp&security=reality#x2\n" +
 		"trojan://pw@c.example:443?security=tls&sni=c.example#ok"
 	items, skipped, err := ParseOutbounds([]byte(payload), "plain")
 	if err != nil || len(items) != 1 || items[0].Name != "ok" {
 		t.Fatalf("items=%v err=%v", items, err)
 	}
-	if !strings.HasPrefix(skipped, "2× ") || !strings.Contains(skipped, "xhttp") {
+	if !strings.HasPrefix(skipped, "2× ") || !strings.Contains(skipped, "kcp") {
 		t.Fatalf("skipped = %q", skipped)
 	}
 	// Only unsupported entries: a valid (empty) result, not an error.
-	items, skipped, err = ParseOutbounds([]byte("vless://u@a.example:443?type=xhttp#x"), "plain")
+	items, skipped, err = ParseOutbounds([]byte("vless://u@a.example:443?type=kcp#x"), "plain")
 	if err != nil || len(items) != 0 || skipped == "" {
 		t.Fatalf("all-unsupported: items=%v skipped=%q err=%v", items, skipped, err)
 	}
@@ -327,7 +327,7 @@ func TestParseOutboundsXrayJSONConfigs(t *testing.T) {
 	   {"tag":"a","protocol":"hysteria","settings":{"address":"h1.example","port":3443,"version":2},
 	    "streamSettings":{"network":"hysteria","hysteriaSettings":{"version":2,"auth":"pw1"},"security":"tls","tlsSettings":{"serverName":"h1.example","fingerprint":"chrome","alpn":["h3"]}}},
 	   {"tag":"b","protocol":"vless","settings":{"vnext":[{"address":"v1.example","port":8443,"users":[{"id":"u1","flow":""}]}]},
-	    "streamSettings":{"network":"xhttp","security":"reality","realitySettings":{"serverName":"x.com","publicKey":"pk","shortId":"ab"}}},
+	    "streamSettings":{"network":"kcp","security":"reality","realitySettings":{"serverName":"x.com","publicKey":"pk","shortId":"ab"}}},
 	   {"protocol":"freedom"},{"protocol":"blackhole"}]},
 	 {"remarks":"DE | HYSTERIA2","outbounds":[
 	   {"tag":"proxy","protocol":"hysteria","settings":{"address":"h1.example","port":3443,"version":2},
@@ -341,8 +341,8 @@ func TestParseOutboundsXrayJSONConfigs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(skipped, "xhttp") {
-		t.Fatalf("xhttp entry must be skipped, got %q", skipped)
+	if !strings.Contains(skipped, "kcp") {
+		t.Fatalf("kcp entry must be skipped, got %q", skipped)
 	}
 	candidates := Candidates("imp", items)
 	if len(candidates) != 2 {

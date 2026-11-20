@@ -486,6 +486,14 @@ func parseStandardURI(raw string, typ string) (managerconfig.Node, error) {
 		node.Security = "tls"
 		node.TLS = true
 	}
+	if node.Transport == "xhttp" {
+		node.Mode = query.Get("mode")
+		if extra := query.Get("extra"); extra != "" {
+			if err := json.Unmarshal([]byte(extra), &node.Extra); err != nil {
+				return node, fmt.Errorf("xhttp extra: %w", err)
+			}
+		}
+	}
 	return node, nil
 }
 
@@ -562,8 +570,11 @@ func intField(payload map[string]any, key string) int {
 
 func normalizeTransport(value string) string {
 	value = strings.ToLower(strings.TrimSpace(value))
-	if value == "websocket" {
+	switch value {
+	case "websocket":
 		return "ws"
+	case "splithttp":
+		return "xhttp"
 	}
 	return value
 }
@@ -802,11 +813,12 @@ func addTransport(outbound map[string]any, node managerconfig.Node) error {
 		if node.Path != "" {
 			transport["path"] = node.Path
 		}
+	case "xhttp":
+		if err := addXHTTP(transport, node); err != nil {
+			return err
+		}
 	default:
-		// sing-box only implements ws, grpc, http, httpupgrade, and quic V2Ray
-		// transports. xhttp/splithttp are Xray-only and have no sing-box
-		// equivalent, so a node using them cannot be rendered.
-		return fmt.Errorf("%w %q (sing-box implements ws, grpc, http, httpupgrade; xhttp/splithttp are Xray-only)", ErrUnsupportedTransport, node.Transport)
+		return fmt.Errorf("%w %q (supported: ws, grpc, http, httpupgrade, xhttp)", ErrUnsupportedTransport, node.Transport)
 	}
 	outbound["transport"] = transport
 	return nil
