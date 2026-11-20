@@ -319,6 +319,31 @@ func TestRenderDNS(t *testing.T) {
 	}
 }
 
+// IP entries are address filters in DNS (deprecated in sing-box 1.14): DNS
+// rules match by domain only, while routes keep the IP entries.
+func TestRenderDNSRulesSkipIPEntries(t *testing.T) {
+	isolate(t)
+	cfg := baseConfig()
+	cfg.DNSServers["cf"] = managerconfig.DNSServer{ID: "cf", Enabled: true, Type: "udp", Address: "1.1.1.1"}
+	cfg.RuleGroups["tg"] = managerconfig.RuleGroup{ID: "tg", Enabled: true, Rules: []string{"domain_suffix:t.me", "ip_cidr:91.108.0.0/16", "ip_is_private:true"}}
+	cfg.RuleGroups["ips"] = managerconfig.RuleGroup{ID: "ips", Enabled: true, Rules: []string{"ip_cidr:149.154.160.0/20"}}
+	cfg.DNSRules["a_tg"] = managerconfig.DNSRule{ID: "a_tg", Enabled: true, RuleGroups: []string{"tg"}, Server: "cf"}
+	cfg.DNSRules["b_ips"] = managerconfig.DNSRule{ID: "b_ips", Enabled: true, RuleGroups: []string{"ips"}, Server: "cf"}
+	cfg.Routes = []managerconfig.Route{{ID: "route_1", Enabled: true, RuleGroup: "tg", Outbound: "direct"}}
+
+	doc, data := renderDoc(t, cfg)
+	if len(doc.DNS.Rules) != 1 {
+		t.Fatalf("IP-only DNS rule must be dropped, want 1 rule:\n%s", data)
+	}
+	dns := doc.DNS.Rules[0]
+	if dns["domain_suffix"] == nil || dns["ip_cidr"] != nil || dns["ip_is_private"] != nil || dns["type"] != nil {
+		t.Fatalf("dns rule must be the domain part only: %#v", dns)
+	}
+	if route := doc.Route.Rules[1]; route["type"] != "logical" || len(route["rules"].([]any)) != 3 {
+		t.Fatalf("route must keep domain + ip_cidr + ip_is_private: %#v", route)
+	}
+}
+
 func TestRenderInjectsLocalBootstrapWhenNoDirectResolver(t *testing.T) {
 	isolate(t)
 	cfg := baseConfig()

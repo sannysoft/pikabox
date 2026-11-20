@@ -306,7 +306,12 @@ func renderInbounds(cfg managerconfig.Config) []map[string]any {
 // rule type becomes one sub-rule and the sub-rules are ORed (a logical rule),
 // because sing-box ANDs different fields inside a single default rule. Remote
 // URLs become one rule_set sub-rule. It returns nil when nothing can match.
-func matchRule(cfg managerconfig.Config, groupIDs []string, sets map[string]managerconfig.RuleSet) map[string]any {
+//
+// For DNS rules (forDNS) IP entries are left out: in DNS they are "address
+// filters" that resolve every query reaching the rule just to test the answer
+// (deprecated in sing-box 1.14, removed in 1.16). Domains decide DNS; the IP
+// entries still apply to routing.
+func matchRule(cfg managerconfig.Config, groupIDs []string, sets map[string]managerconfig.RuleSet, forDNS bool) map[string]any {
 	values := map[string][]string{}
 	var types []string
 	var ruleSets []string
@@ -318,7 +323,7 @@ func matchRule(cfg managerconfig.Config, groupIDs []string, sets map[string]mana
 		}
 		for _, rule := range group.Rules {
 			typ, value, err := managerconfig.ParseRule(rule)
-			if err != nil {
+			if err != nil || forDNS && (typ == "ip_cidr" || typ == "ip_is_private") {
 				continue
 			}
 			switch typ {
@@ -460,7 +465,7 @@ func renderRouteLabeled(cfg managerconfig.Config, plan Plan, final string, resol
 			if !entry.Enabled || !plan.Rendered[entry.Outbound] {
 				continue
 			}
-			if match := matchRule(cfg, []string{entry.RuleGroup}, sets); match != nil {
+			if match := matchRule(cfg, []string{entry.RuleGroup}, sets, false); match != nil {
 				route.Rules = append(route.Rules, withAction(match, entry.Outbound))
 				labels = append(labels, RuleLabel{Kind: "route", ID: entry.ID, Group: entry.RuleGroup})
 			}
@@ -468,7 +473,7 @@ func renderRouteLabeled(cfg managerconfig.Config, plan Plan, final string, resol
 	}
 	// DNS rules render in every mode, so their rule-sets must be defined too.
 	for _, rule := range cfg.EnabledDNSRules() {
-		matchRule(cfg, rule.RuleGroups, sets)
+		matchRule(cfg, rule.RuleGroups, sets, false)
 	}
 	for _, id := range sortedKeys(sets) {
 		route.RuleSet = append(route.RuleSet, renderRuleSet(sets[id]))
@@ -520,7 +525,7 @@ func renderDNS(cfg managerconfig.Config, plan Plan, final string) *dnsConfig {
 		if sources := normalizeSourceCIDRs(rule.Sources); len(sources) > 0 {
 			parts = append(parts, map[string]any{"source_ip_cidr": sources})
 		}
-		if match := matchRule(cfg, rule.RuleGroups, sets); match != nil {
+		if match := matchRule(cfg, rule.RuleGroups, sets, true); match != nil {
 			parts = append(parts, match)
 		}
 		var entry map[string]any
