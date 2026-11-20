@@ -9,22 +9,122 @@ var callSet = rpc.declare({ object: 'pikabox', method: 'outbound_set', params: [
 var callDelete = rpc.declare({ object: 'pikabox', method: 'outbound_delete', params: [ 'id' ], expect: { '': {} } });
 var callTest = rpc.declare({ object: 'pikabox', method: 'outbound_test', params: [ 'id' ], expect: { '': {} } });
 
+function input(name, label, value, attrs) {
+	return E('label', {}, [ label, E('input', Object.assign({ 'class': 'cbi-input-text', 'name': name, 'value': value == null ? '' : String(value) }, attrs || {})) ]);
+}
+
+function serverFields(ob, defaultPort) {
+	return [
+		input('server', _('Server'), ob.server, { 'placeholder': 'vp3.example.com' }),
+		input('server_port', _('Port'), ob.server_port || defaultPort, { 'type': 'number', 'min': '1', 'max': '65535' }),
+		input('username', _('Username'), ob.username),
+		input('password', _('Password'), ob.password, { 'type': 'password', 'autocomplete': 'new-password' })
+	];
+}
+
+// Protocols with a form; they need the sing-box-extended build. Each builds
+// sing-box outbound JSON from the form, on top of the JSON being edited so
+// options the form doesn't show are kept.
+var PROTOCOLS = {
+	mieru: {
+		name: _('Mieru'),
+		fields: function(ob) {
+			return serverFields(ob, 8446).concat([
+				E('label', {}, [ _('Transport'), theme.select('transport', [ 'TCP', 'UDP' ], ob.transport || 'TCP') ]),
+				E('label', {}, [ _('Multiplexing'), theme.select('multiplexing', [
+					{ id: '', name: _('Default') }, 'MULTIPLEXING_OFF', 'MULTIPLEXING_LOW', 'MULTIPLEXING_MIDDLE', 'MULTIPLEXING_HIGH'
+				], ob.multiplexing || '') ])
+			]);
+		},
+		build: function(root, ob) {
+			ob.transport = theme.value(root, 'transport');
+			ob.multiplexing = theme.value(root, 'multiplexing') || undefined;
+		}
+	},
+	trusttunnel: {
+		name: _('TrustTunnel'),
+		fields: function(ob) {
+			var tls = ob.tls || {};
+			return serverFields(ob, 443).concat([
+				theme.checkbox('quic', !!ob.quic, _('QUIC (HTTP/3 over UDP) — faster where UDP gets through; off = HTTP/2 over TCP')),
+				input('server_name', _('TLS server name (SNI)'), tls.server_name, { 'placeholder': _('the server\'s domain') }),
+				E('label', {}, [ _('Pinned certificate (PEM, optional — for a self-signed server)'),
+					E('textarea', { 'class': 'cbi-input-textarea pikabox-mono', 'name': 'certificate', 'style': 'min-height:64px', 'placeholder': '-----BEGIN CERTIFICATE-----…' },
+						[ [].concat(tls.certificate || []).join('\n') ]) ]),
+				theme.checkbox('insecure', !!tls.insecure, _('Skip certificate verification (not recommended)'))
+			]);
+		},
+		build: function(root, ob) {
+			var quic = theme.value(root, 'quic'), pem = theme.value(root, 'certificate');
+			ob.quic = quic || undefined;
+			ob.tls = Object.assign({}, ob.tls, {
+				enabled: true,
+				server_name: theme.value(root, 'server_name') || undefined,
+				alpn: [ quic ? 'h3' : 'h2' ],
+				certificate: pem ? pem.split('\n').map(function(l) { return l.trim(); }).filter(Boolean) : undefined,
+				insecure: theme.value(root, 'insecure') || undefined
+			});
+		}
+	}
+};
+
+// parseSource returns the outbound JSON when the source is JSON of a protocol
+// that has a form.
+function parseSource(source) {
+	try {
+		var ob = JSON.parse(source || '');
+		return ob && PROTOCOLS[ob.type] ? ob : null;
+	} catch (e) {
+		return null;
+	}
+}
+
 function showModal(view, row) {
 	row = row || { enabled: true, source: '' };
+	var edited = parseSource(row.source) || {};
+	var box = E('div');
+	var render = function(protocol) {
+		if (!PROTOCOLS[protocol]) {
+			box.replaceChildren(
+				E('label', {}, [
+					_('Source — share URI or sing-box outbound JSON'),
+					E('textarea', { 'class': 'cbi-input-textarea pikabox-mono', 'name': 'source', 'placeholder': 'vless://uuid@host:443?security=reality&pbk=…#name\n\nor\n\n{"type":"vless","server":"…","server_port":443,…}' }, [ row.source || '' ])
+				]),
+				E('p', { 'class': 'pikabox-inline-help' }, _('Supported URIs: vless, vmess, trojan, ss, hysteria2/hy2, tuic (vless also with XHTTP). JSON is passed to sing-box as-is (its tag is replaced by this outbound\'s ID), so any outbound type and option works.')));
+			return;
+		}
+		box.replaceChildren.apply(box, PROTOCOLS[protocol].fields(edited.type === protocol ? edited : {}).concat([
+			E('p', { 'class': 'pikabox-inline-help' }, _('Needs sing-box-extended on the router.'))
+		]));
+	};
+	var current = edited.type || 'source';
+	var picker = theme.select('protocol', [ { id: 'source', name: _('Share link or JSON') } ].concat(Object.keys(PROTOCOLS).map(function(id) {
+		return { id: id, name: PROTOCOLS[id].name };
+	})), current, { 'change': function(ev) { render(ev.target.value); } });
+	render(current);
 	theme.modal(view, row.id ? _('Edit Outbound') : _('Add Outbound'), [
 		theme.checkbox('enabled', row.enabled !== false, _('Enabled')),
 		E('label', {}, [ _('Name'), E('input', { 'class': 'cbi-input-text', 'name': 'name', 'value': row.name || '', 'placeholder': 'nl-vp1' }) ]),
-		E('label', {}, [
-			_('Source — share URI or sing-box outbound JSON'),
-			E('textarea', { 'class': 'cbi-input-textarea pikabox-mono', 'name': 'source', 'placeholder': 'vless://uuid@host:443?security=reality&pbk=…#name\n\nor\n\n{"type":"vless","server":"…","server_port":443,…}' }, [ row.source || '' ])
-		]),
-		E('p', { 'class': 'pikabox-inline-help' }, _('Supported URIs: vless, vmess, trojan, ss, hysteria2/hy2, tuic. JSON is passed to sing-box as-is (its tag is replaced by this outbound\'s ID), so any outbound type and option works.'))
+		E('label', {}, [ _('Protocol'), picker ]),
+		box
 	], function(root) {
+		var protocol = theme.value(root, 'protocol'), source = theme.value(root, 'source');
+		if (PROTOCOLS[protocol]) {
+			var ob = Object.assign({}, edited.type === protocol ? edited : {}, {
+				type: protocol,
+				server: theme.value(root, 'server'),
+				server_port: parseInt(theme.value(root, 'server_port'), 10) || undefined,
+				username: theme.value(root, 'username'),
+				password: theme.value(root, 'password')
+			});
+			PROTOCOLS[protocol].build(root, ob);
+			source = JSON.stringify(ob);
+		}
 		return callSet({
 			id: row.id || '',
 			enabled: theme.value(root, 'enabled'),
 			name: theme.value(root, 'name'),
-			source: theme.value(root, 'source')
+			source: source
 		});
 	}, _('Outbound saved'));
 }
